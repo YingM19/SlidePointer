@@ -7,7 +7,7 @@ import os from "node:os";
 import { PDFDocument } from "pdf-lib";
 import { Store } from "../server/store.ts";
 import { CourseService } from "../server/courses.ts";
-import { ContinuousKnowledgeReader, readingBatches } from "../server/knowledge-reader.ts";
+import { ContinuousKnowledgeReader, parseSections, readingBatches, sectionBatches } from "../server/knowledge-reader.ts";
 import { PersistentKnowledgeRuntime, type ReadInput, type KnowledgeEngine } from "../server/knowledge-runtime.ts";
 import { checkpoint, createReadingSession, readingHistory, resolveReadingSeed } from "../server/knowledge-sessions.ts";
 import { ReadingService } from "../server/reading.ts";
@@ -91,7 +91,7 @@ test("取消发生在模型结果保存后，恢复补存进度且不重复批�
     const result = f.store.get<KnowledgeRevision>("knowledge", r.id)!;
     assert.equal(result.state, "completed"); assert.equal(result.pages.length, 12);
     assert.equal(f.calls.filter(c => c.input.key === "batch:0").length, 1);
-    assert.equal(seed.completed, 6); assert.equal(seed.through, 1);
+    assert.equal(seed.completed, 6); assert.equal(seed.through, 2, "本章规划与第一批");
     assert.equal(f.closes(), 2);
   } finally { f.close(); }
 });
@@ -300,4 +300,33 @@ test("Claude Code 连接按原生会话阅读：每批只发本批，检查点�
     const done = f.store.get<KnowledgeReadSession>("knowledgeSession", session.id)!;
     assert.equal(done.checkpoint?.mode, "fork"); assert.equal(done.checkpoint?.threadId, "claude:session"); assert.equal(done.checkpoint?.turnId, "turn-2");
   } finally { await engine.close(); f.close(); }
+});
+
+test("本章先规划小节：页码连续不遗漏，长节均分、相邻短节合并", () => {
+  const answer = "本章分四节。\n```json\n[{\"title\":\"2.2 光栅化\",\"start\":10,\"end\":30},{\"title\":\"2.1 显示\",\"start\":2,\"end\":9},{\"title\":\"2.3 小结\",\"start\":31,\"end\":31},{\"title\":\"2.4 习题\",\"start\":32,\"end\":33},{\"title\":\"越界\",\"start\":99}]\n```";
+  const sections = parseSections(answer, 33)!;
+  assert.deepEqual(sections, [{ title: "2.1 显示", start: 1, end: 9 }, { title: "2.2 光栅化", start: 10, end: 30 }, { title: "2.3 小结", start: 31, end: 31 }, { title: "2.4 习题", start: 32, end: 33 }]);
+  assert.equal(parseSections("没有结构", 33), undefined);
+  const pages = Array.from({ length: 33 }, (_, i) => ({ page: i + 1, text: `p${i + 1}` }));
+  const { batches, labels } = sectionBatches(pages, sections);
+  assert.deepEqual(batches.map(b => b.map(p => p.page)).flat(), pages.map(p => p.page), "每页恰好读一次");
+  assert.deepEqual(batches.map(b => b.length), [5, 4, 7, 7, 7, 3]);
+  assert.deepEqual(labels, ["2.1 显示（本节第1/2部分）", "2.1 显示（本节第2/2部分）", "2.2 光栅化（本节第1/3部分）", "2.2 光栅化（本节第2/3部分）", "2.2 光栅化（本节第3/3部分）", "2.3 小结、2.4 习题"]);
+});
+
+test("规划结果决定批次，提示中带小节名；规划无法解析时回退为固定分批", async () => {
+  const f = fixture([20]);
+  try {
+    f.setBefore((_s, input) => { if (input.key === "plan") assert.ok(input.sources?.every(s => !s.image && s.text.length <= 200)); });
+    const engine = f.factory;
+    const reader = new ContinuousKnowledgeReader(f.store, f.courses, () => {
+      const e = engine();
+      return { ...e, read: async (sid, input, signal) => { const t = await e.read(sid, input, signal); if (input.key === "plan") t.answer = '```json\n[{"title":"1.1 引言","start":1,"end":8},{"title":"1.2 方法","start":9,"end":20}]\n```'; return t; } };
+    }, r => f.store.put("knowledge", r));
+    const r = f.revision(); await reader.run(r.id, new AbortController().signal);
+    const batches = f.calls.filter(c => c.input.key.startsWith("batch:"));
+    assert.deepEqual(batches.map(c => c.input.pages), [[1, 2, 3, 4, 5, 6, 7, 8], [9, 10, 11, 12, 13, 14], [15, 16, 17, 18, 19, 20]]);
+    assert.match(batches[1].input.prompt, /小节「1\.2 方法（本节第1\/2部分）」/);
+    assert.equal(f.store.get<KnowledgeRevision>("knowledge", r.id)?.state, "completed");
+  } finally { f.close(); }
 });
