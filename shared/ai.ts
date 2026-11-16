@@ -1,7 +1,7 @@
 import type { AIModel, AISettings, SelectionRef, Source } from "./types.ts";
 
 export const DEFAULT_CONNECTION = "codex";
-export type AIProtocol = "codex" | "openai" | "compatible" | "anthropic" | "gemini";
+export type AIProtocol = "codex" | "claude-code" | "openai" | "compatible" | "anthropic" | "gemini";
 export interface AIConnection {
   id: string;
   name: string;
@@ -12,6 +12,7 @@ export interface AIConnection {
   models: AIModel[];
   defaultModel?: string;
   codexPath?: string;
+  claudePath?: string;
   hasKey?: boolean;
   checkedAt?: string;
   status?: "ready" | "unconfigured" | "error";
@@ -191,6 +192,7 @@ export function defaultEffort(model?: EffortModel) {
   return modelEfforts(model).includes(effort) ? effort : "";
 }
 export const connectionPresets: { id: string; name: string; protocol: AIProtocol; baseUrl: string; reasoningEfforts?: string[]; defaultReasoningEffort?: string }[] = [
+  { id: "claude-code", name: "Claude Code 订阅", protocol: "claude-code", baseUrl: "" },
   { id: "openai", name: "OpenAI", protocol: "openai", baseUrl: "https://api.openai.com/v1" },
   { id: "anthropic", name: "Anthropic", protocol: "anthropic", baseUrl: "https://api.anthropic.com/v1" },
   { id: "gemini", name: "Gemini", protocol: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
@@ -207,6 +209,8 @@ export function withPresetEfforts<T extends AIConnection>(connection: T): T {
   if (!preset?.reasoningEfforts) return connection;
   return { ...connection, models: connection.models.map(m => m.capabilities?.reasoning === true && !m.supportedReasoningEfforts.length ? { ...m, supportedReasoningEfforts: preset.reasoningEfforts!.map(reasoningEffort => ({ reasoningEffort, description: "" })), defaultReasoningEffort: m.defaultReasoningEffort || preset.defaultReasoningEffort || "" } : m) };
 }
+// Subscription connections run a local official CLI and never use a base URL or API key.
+export const localCli = (protocol: AIProtocol) => protocol === "codex" || protocol === "claude-code";
 export const modelKey = (connectionId: string | undefined, model: string) => `${connectionId || DEFAULT_CONNECTION}::${model}`;
 export const profileLabels = { quick: "快速解释", deep: "深入分析", batch: "批量整理" };
 export function builtinAssistants(): AssistantProfile[] {

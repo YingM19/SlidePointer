@@ -18,6 +18,7 @@ import { researchRoutes } from "./research-routes.ts";
 import { ResearchTools } from "./ai-tool-broker.ts";
 import type { ResearchRun } from "../shared/ai.ts";
 import { Codex, redact } from "./codex.ts";
+import { setClaudeWorkspace } from "./claude-code.ts";
 import { openPdf, renderPage, pdfAssets } from "./pdf.ts";
 import { search, excerpt } from "./search.ts";
 import { ImportManager, officeCapabilities } from "./imports.ts";
@@ -54,6 +55,7 @@ const dir = path.resolve(
 mkdirSync(path.join(dir, "pdfs"), { recursive: true });
 mkdirSync(path.join(dir, "attachments"), { recursive: true });
 mkdirSync(path.join(dir, "knowledge-runtime"), { recursive: true });
+setClaudeWorkspace(path.join(dir, "ai-context-claude"));
 const store = new Store(dir),
   ai = new Codex(dir),
   events = new EventEmitter();

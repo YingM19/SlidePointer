@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { builtinAssistants, defaultEffort, modelEfforts, modelKey, withPresetEfforts, type AIConnection, type AIUserPreferences, type AssistantProfile, type AIMemory, type AIUsage } from "../shared/ai.ts";
+import { builtinAssistants, defaultEffort, localCli, modelEfforts, modelKey, withPresetEfforts, type AIConnection, type AIUserPreferences, type AssistantProfile, type AIMemory, type AIUsage } from "../shared/ai.ts";
 import type { AIModel, AISettings } from "../shared/types.ts";
 import { Store } from "./store.ts";
 import { Codex } from "./codex.ts";
 import { SecretVault } from "./ai-vault.ts";
 import { discoverModels, invokeProvider, serviceUrl } from "./ai-provider.ts";
+import { claudeModels, claudeStatus } from "./claude-code.ts";
 
 export const settingsSchema = z.object({ connectionId: z.string().max(100).optional(), model: z.string().max(200).optional(), assistantId: z.string().max(100).optional(), reasoningEffort: z.string().max(30).optional(), agentTools: z.boolean().optional(), webSearch: z.boolean().optional(), textOnly: z.boolean().optional() });
 const capability = z.union([z.boolean(), z.literal("unknown")]);
 const modelSchema = z.object({ model: z.string().min(1).max(200), displayName: z.string().max(200), description: z.string().max(1000).optional(), isDefault: z.boolean().default(false), inputModalities: z.array(z.string()).optional(), defaultReasoningEffort: z.string().trim().max(30).default(""), supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().trim().max(30), description: z.string().max(200) })).max(20).transform(list => list.filter(e => e.reasoningEffort)).default([]), capabilities: z.object({ vision: capability, tools: capability, reasoning: capability }).optional(), contextWindow: z.number().int().positive().optional(), custom: z.boolean().optional() });
-const connectionSchema = z.object({ name: z.string().trim().min(1).max(100), protocol: z.enum(["codex", "openai", "compatible", "anthropic", "gemini"]), preset: z.string().max(100).optional(), baseUrl: z.string().max(2000), enabled: z.boolean(), models: z.array(modelSchema).max(2000), defaultModel: z.string().max(200).optional(), codexPath: z.string().max(2000).optional(), apiKey: z.string().max(8192).optional() });
+const connectionSchema = z.object({ name: z.string().trim().min(1).max(100), protocol: z.enum(["codex", "claude-code", "openai", "compatible", "anthropic", "gemini"]), preset: z.string().max(100).optional(), baseUrl: z.string().max(2000), enabled: z.boolean(), models: z.array(modelSchema).max(2000), defaultModel: z.string().max(200).optional(), codexPath: z.string().max(2000).optional(), claudePath: z.string().max(2000).optional(), apiKey: z.string().max(8192).optional() });
 const assistantSchema = z.object({ name: z.string().trim().min(1).max(100), description: z.string().max(1000), prompt: z.string().max(20000), style: z.string().max(2000), settings: settingsSchema, scope: z.enum(["page", "nearby", "full"]), tools: z.array(z.enum(["course", "notes", "web", "artifacts"])).max(4), mcpToolIds: z.array(z.string().max(200)).max(100) });
 export class AIConfig {
   readonly vault: SecretVault;
@@ -28,7 +29,8 @@ export class AIConfig {
     const v = connectionSchema.parse(input), old = id ? this.connection(id) : undefined;
     if (v.protocol === "codex" && id !== "codex") throw Error("Codex 订阅使用内置连接");
     if (id === "codex" && v.protocol !== "codex") throw Error("不能更改内置连接的协议");
-    if (v.protocol !== "codex") serviceUrl(v.baseUrl, "");
+    if (!localCli(v.protocol)) serviceUrl(v.baseUrl, "");
+    if (v.protocol === "claude-code" && v.apiKey) throw Error("Claude Code 订阅连接不使用 API Key");
     const now = new Date().toISOString(), connectionId = id || randomUUID();
     if (v.apiKey !== undefined) await this.vault.set(connectionId, v.apiKey.trim());
     const { apiKey: _, ...fields } = v;
@@ -56,6 +58,15 @@ export class AIConfig {
         try { limits = await this.codex.rateLimits(); } catch { limitMessage = "当前 CLI 未返回订阅额度，额度信息暂不可用"; }
         this.store.put("aiConnection", { ...c, checkedAt: new Date().toISOString(), status: status.authenticated ? "ready" : "unconfigured", error: undefined }); this.notify();
         return { id, ...status, limits, limitMessage };
+      }
+      if (c.protocol === "claude-code" && !testModel) {
+        const status = await claudeStatus(c);
+        if (!status.authenticated) throw Error(status.error || "Claude Code 未登录");
+        // Keep user-added model IDs and display names; refresh the built-in aliases.
+        const builtin = claudeModels();
+        c.models = [...builtin.map(m => { const old = c.models.find(x => x.model === m.model); return old ? { ...m, displayName: old.displayName, defaultReasoningEffort: old.defaultReasoningEffort || m.defaultReasoningEffort } : m; }), ...c.models.filter(m => m.custom && !builtin.some(x => x.model === m.model))];
+        this.store.put("aiConnection", { ...c, checkedAt: new Date().toISOString(), status: "ready", error: undefined }); this.notify();
+        return { ...status, models: c.models };
       }
       const key = await this.vault.get(id);
       if (testModel) {

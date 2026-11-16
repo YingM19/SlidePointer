@@ -1,5 +1,6 @@
 import type { AIConnection, ResearchMessage } from "../shared/ai.ts";
 import { randomUUID } from "node:crypto";
+import { invokeClaudeCode, claudeModels } from "./claude-code.ts";
 
 export interface FunctionTool { name: string; description: string; inputSchema: Record<string, unknown> }
 export interface ProviderRequest {
@@ -68,6 +69,7 @@ function toolArguments(value: unknown): Record<string, unknown> {
   return args;
 }
 export async function invokeProvider(connection: AIConnection, key: string, req: ProviderRequest): Promise<ProviderResult> {
+  if (connection.protocol === "claude-code") return invokeClaudeCode(connection, req);
   const tools = req.tools || [], protocol = connection.protocol;
   let route = "", body: any;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -170,6 +172,7 @@ export async function invokeProvider(connection: AIConnection, key: string, req:
 }
 
 export async function discoverModels(c: AIConnection, key: string) {
+  if (c.protocol === "claude-code") return claudeModels().map(m => ({ id: m.model, name: m.displayName }));
   const headers: Record<string, string> = {};
   if (c.protocol === "anthropic") { headers["x-api-key"] = key; headers["anthropic-version"] = "2023-06-01"; }
   else if (c.protocol === "gemini") { if (key) headers["x-goog-api-key"] = key; }
