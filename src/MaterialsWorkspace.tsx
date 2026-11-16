@@ -159,6 +159,12 @@ export function MaterialsWorkspace({
           <>
             <CourseImports r={r} />
             {" "}
+            <details className="theme-manager course-settings"><summary>课程设置</summary>
+              <form key={course.id + course.name} onSubmit={e => { e.preventDefault(); const name = String(new FormData(e.currentTarget).get("name") || "").trim(); if (name && name !== course.name) void perform(async () => { await patchCourse({ name }); setMessage("课程已改名"); }); }}>
+                <input name="name" aria-label="课程名称" defaultValue={course.name} maxLength={100} required />
+                <button disabled={busy}>保存名称</button>
+              </form>
+            </details>
             <section className="course-section">
               <div className="course-section-heading">
                 <h3>课程章节</h3>
