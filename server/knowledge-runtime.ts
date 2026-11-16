@@ -2,7 +2,7 @@ import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { KnowledgeReadSession, KnowledgeReadTurn, Source } from "../shared/types.ts";
-import type { ResearchMessage } from "../shared/ai.ts";
+import { contextWindowFor, type ResearchMessage } from "../shared/ai.ts";
 import type { Store } from "./store.ts";
 import type { AIConfig } from "./ai-config.ts";
 import type { Scheduler } from "./scheduler.ts";
@@ -103,7 +103,7 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
         } else {
           const history = readingHistory(this.store, session.parent).concat(session.turns.filter(t => t.state === "completed"));
           const images = async (names: string[]) => Promise.all(names.map(async f => `data:image/png;base64,${(await readFile(path.join(this.store.dir, "attachments", f))).toString("base64")}`));
-          const budget = Math.floor((resolved.model.contextWindow || 32000) * .75);
+          const budget = Math.floor((contextWindowFor(resolved.model) || 32000) * .75);
           const inputEstimate = prompt.length / 2 + turn.images.length * 1600;
           let offset = session.portableMemory?.through || 0;
           const estimated = (h: typeof history) => h.reduce((n, t) => n + (t.prompt.length + t.answer.length + t.sources.reduce((n, s) => n + s.text.length, 0)) / 2 + t.images.length * 1600, 0);

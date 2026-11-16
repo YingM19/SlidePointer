@@ -191,6 +191,18 @@ export function defaultEffort(model?: EffortModel) {
   const effort = model?.defaultReasoningEffort?.trim() || "";
   return modelEfforts(model).includes(effort) ? effort : "";
 }
+// Services rarely report context length; known families get their documented window so reading
+// replays whole chapters instead of compacting at the conservative 32k default.
+const knownWindows: [RegExp, number][] = [
+  [/deepseek-v4/i, 1000000], [/deepseek/i, 128000],
+  [/claude|^(sonnet|opus|haiku)$/i, 200000],
+  [/gemini-(1\.5|2|3)/i, 1000000],
+  [/gpt-4\.1/i, 1000000], [/gpt-5/i, 400000], [/gpt-4o|^o\d/i, 128000],
+  [/qwen/i, 128000], [/kimi|moonshot/i, 128000], [/glm-4/i, 128000],
+];
+export function contextWindowFor(model: { model: string; contextWindow?: number }) {
+  return model.contextWindow || knownWindows.find(([pattern]) => pattern.test(model.model))?.[1];
+}
 export const connectionPresets: { id: string; name: string; protocol: AIProtocol; baseUrl: string; reasoningEfforts?: string[]; defaultReasoningEffort?: string }[] = [
   { id: "claude-code", name: "Claude Code 订阅", protocol: "claude-code", baseUrl: "" },
   { id: "openai", name: "OpenAI", protocol: "openai", baseUrl: "https://api.openai.com/v1" },

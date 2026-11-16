@@ -17,7 +17,7 @@ export function claudeModels(): AIModel[] {
     ["sonnet", "Claude Sonnet（最新）", true],
     ["opus", "Claude Opus（最新）", false],
     ["haiku", "Claude Haiku（最新）", false],
-  ].map(([model, displayName, isDefault]) => ({ model: model as string, displayName: displayName as string, isDefault: isDefault as boolean, inputModalities: ["text", "image"], defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts, capabilities: { vision: true, tools: true, reasoning: true } }));
+  ].map(([model, displayName, isDefault]) => ({ model: model as string, displayName: displayName as string, isDefault: isDefault as boolean, inputModalities: ["text", "image"], defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts, capabilities: { vision: true, tools: true, reasoning: true }, contextWindow: 200000 }));
 }
 
 let workspace = path.join(os.tmpdir(), "slidepointer-claude");

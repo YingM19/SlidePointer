@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { builtinAssistants, defaultEffort, localCli, modelEfforts, modelKey, withPresetEfforts, type AIConnection, type AIUserPreferences, type AssistantProfile, type AIMemory, type AIUsage } from "../shared/ai.ts";
+import { builtinAssistants, contextWindowFor, defaultEffort, localCli, modelEfforts, modelKey, withPresetEfforts, type AIConnection, type AIUserPreferences, type AssistantProfile, type AIMemory, type AIUsage } from "../shared/ai.ts";
 import type { AIModel, AISettings } from "../shared/types.ts";
 import { Store } from "./store.ts";
 import { Codex } from "./codex.ts";
@@ -17,7 +17,7 @@ const assistantSchema = z.object({ name: z.string().trim().min(1).max(100), desc
 function claudeCatalog(c: AIConnection): AIConnection {
   if (c.protocol !== "claude-code") return c;
   const catalog = claudeModels();
-  return { ...c, models: c.models.map(m => { const known = catalog.find(x => x.model === m.model); return known ? { ...m, capabilities: known.capabilities, supportedReasoningEfforts: known.supportedReasoningEfforts } : m; }) };
+  return { ...c, models: c.models.map(m => { const known = catalog.find(x => x.model === m.model); return known ? { ...m, capabilities: known.capabilities, supportedReasoningEfforts: known.supportedReasoningEfforts, contextWindow: known.contextWindow } : m; }) };
 }
 export class AIConfig {
   readonly vault: SecretVault;
@@ -50,7 +50,7 @@ export class AIConfig {
     const result = await Promise.all(list.map(async c => {
       let models = c.models;
       if (c.protocol === "codex") { try { models = await this.codex.models(); } catch { models = []; } }
-      return models.map(m => ({ ...m, isDefault: c.defaultModel ? m.model === c.defaultModel : m.isDefault, connectionId: c.id, connectionName: c.name, capabilities: m.capabilities || { vision: m.inputModalities?.includes("image") ?? "unknown", tools: c.protocol === "codex" ? true : "unknown", reasoning: m.supportedReasoningEfforts.length > 0 }, favorite: this.preferences().favorites.includes(modelKey(c.id, m.model)) }));
+      return models.map(m => ({ ...m, contextWindow: contextWindowFor(m), isDefault: c.defaultModel ? m.model === c.defaultModel : m.isDefault, connectionId: c.id, connectionName: c.name, capabilities: m.capabilities || { vision: m.inputModalities?.includes("image") ?? "unknown", tools: c.protocol === "codex" ? true : "unknown", reasoning: m.supportedReasoningEfforts.length > 0 }, favorite: this.preferences().favorites.includes(modelKey(c.id, m.model)) }));
     }));
     return result.flat();
   }

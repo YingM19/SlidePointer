@@ -270,3 +270,16 @@ test("API连接重放原始图文消息，超过预算时保存压缩检查点",
     assert.ok(done.turns[0].prompt.length > 10000, "原始记录仍完整保留");
   } finally { await engine.close(); f.close(); }
 });
+
+test("未声明上下文长度的 Claude 模型按 200k 计算，读完长章节也不压缩", async () => {
+  const f = fixture([1]); let compactions = 0, calls = 0;
+  const claude = { resolve: async (settings: object) => ({ settings: { ...settings, model: "sonnet", connectionId: "claude" }, connection: { id: "claude", protocol: "claude-code" }, model: { model: "sonnet" } }), usage: () => {}, vault: { get: async () => "" } } as unknown as AIConfig;
+  const engine = new PersistentKnowledgeRuntime(f.store, claude, new Scheduler(), { invoke: async (_c, _k, input) => { calls++; if (input.messages[0].text.includes("压缩为可继续阅读")) compactions++; return { text: "本批笔记".repeat(300), toolCalls: [] }; } });
+  try {
+    const session = createReadingSession(f.store, f.course.id, [f.docs[0].id], { connectionId: "claude", model: "sonnet" }, "章节", 114, f.docs[0].id);
+    // 19 batches of six pages, each with a full page of text, is a 100+ page chapter.
+    for (let b = 0; b < 19; b++) await engine.read(session.id, { key: `batch:${b}`, prompt: `第${b + 1}批`, sources: Array.from({ length: 6 }, (_, i) => ({ id: `p${b * 6 + i + 1}`, documentId: f.docs[0].id, page: b * 6 + i + 1, text: "页面原文".repeat(150) })) }, new AbortController().signal);
+    assert.equal(calls, 19); assert.equal(compactions, 0);
+    assert.equal(f.store.get<KnowledgeReadSession>("knowledgeSession", session.id)?.portableMemory, undefined);
+  } finally { await engine.close(); f.close(); }
+});
