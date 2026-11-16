@@ -144,6 +144,9 @@ input, textarea, select { border-color: #d4d8cf; background: var(--paper); }
 .overview-framework { padding: 18px 22px; margin-bottom: 24px; border: 1px solid var(--line); border-radius: 8px; background: #fafbf7; }
 .overview-framework h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .overview-framework .section-title { flex-wrap: wrap; gap: 8px; }
+.framework-preview { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.framework-preview summary { font-size: 13px; color: var(--muted); cursor: pointer; }
+.coverage-note button { margin-left: 8px; font-size: 12px; }
 .reading-seed-label { flex: none; line-height: 1.5; padding: 7px 12px; overflow-wrap: anywhere; }
 .overview-page .reading-seed-label { padding: 6px 0; border: 0; }
 .chapter-content .page-actions { flex-wrap: wrap; margin-top: 12px; }
