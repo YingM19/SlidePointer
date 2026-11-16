@@ -215,6 +215,20 @@ export const connectionPresets: { id: string; name: string; protocol: AIProtocol
   { id: "lmstudio", name: "LM Studio", protocol: "compatible", baseUrl: "http://127.0.0.1:1234/v1" },
   { id: "custom", name: "自定义服务", protocol: "compatible", baseUrl: "" },
 ];
+// Documented capabilities for known model IDs fill in only what is still "unknown"; a user's choice wins.
+const knownCapabilities: [RegExp, { vision: boolean; tools: boolean; reasoning: boolean }][] = [
+  [/^deepseek-v4.*vision/i, { vision: true, tools: true, reasoning: true }],
+  [/^deepseek-v4/i, { vision: false, tools: true, reasoning: true }],
+];
+export function withKnownCapabilities<T extends AIConnection>(connection: T): T {
+  return { ...connection, models: connection.models.map(m => {
+    const known = knownCapabilities.find(([pattern]) => pattern.test(m.model))?.[1];
+    if (!known) return m;
+    const current = { vision: "unknown", tools: "unknown", reasoning: "unknown", ...m.capabilities } as const;
+    const pick = (key: keyof typeof known) => current[key] === "unknown" ? known[key] : current[key];
+    return { ...m, capabilities: { vision: pick("vision"), tools: pick("tools"), reasoning: pick("reasoning") } };
+  }) };
+}
 // A confirmed reasoning model with no list of its own uses the service's documented efforts.
 export function withPresetEfforts<T extends AIConnection>(connection: T): T {
   const preset = connectionPresets.find(p => p.id === connection.preset);

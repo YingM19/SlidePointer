@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { builtinAssistants, contextWindowFor, defaultEffort, localCli, modelEfforts, modelKey, withPresetEfforts, type AIConnection, type AIUserPreferences, type AssistantProfile, type AIMemory, type AIUsage } from "../shared/ai.ts";
+import { builtinAssistants, contextWindowFor, defaultEffort, localCli, modelEfforts, modelKey, withKnownCapabilities, withPresetEfforts, type AIConnection, type AIUserPreferences, type AssistantProfile, type AIMemory, type AIUsage } from "../shared/ai.ts";
 import type { AIModel, AISettings } from "../shared/types.ts";
 import { Store } from "./store.ts";
 import { Codex } from "./codex.ts";
@@ -29,7 +29,7 @@ export class AIConfig {
     if (executable) codex.useExecutable(executable);
     for (const assistant of builtinAssistants()) if (!store.get("aiAssistant", assistant.id)) store.put("aiAssistant", assistant);
   }
-  connections() { return this.store.all<AIConnection>("aiConnection").map(c => ({ ...withPresetEfforts(claudeCatalog(c)), hasKey: this.vault.has(c.id) })); }
+  connections() { return this.store.all<AIConnection>("aiConnection").map(c => ({ ...withPresetEfforts(withKnownCapabilities(claudeCatalog(c))), hasKey: this.vault.has(c.id) })); }
   connection(id = "codex") { const c = this.connections().find(c => c.id === id); if (!c) throw Error("模型连接不存在"); return c; }
   async saveConnection(id: string | undefined, input: unknown) {
     const v = connectionSchema.parse(input), old = id ? this.connection(id) : undefined;

@@ -18,7 +18,7 @@ import { ResearchService } from "../server/ai-research.ts";
 import { NotesService } from "../server/notes.ts";
 import { Scheduler } from "../server/scheduler.ts";
 import { ChatService } from "../server/chat.ts";
-import { connectionPresets, defaultEffort, modelEfforts, type AIConnection, type ResearchRun, type ResearchArtifact } from "../shared/ai.ts";
+import { connectionPresets, contextWindowFor, defaultEffort, modelEfforts, withKnownCapabilities, withPresetEfforts, type AIConnection, type ResearchRun, type ResearchArtifact } from "../shared/ai.ts";
 import type { Document, Turn } from "../shared/types.ts";
 
 test("思考强度：默认值计入可选项，不支持推理时不发送，空白项被忽略", async () => {
@@ -349,4 +349,18 @@ test("外部 MCP 仅执行已启用且按助手授权的只读工具，定义变
     assert.equal(publicAddress("127.0.0.1"), false); assert.equal(publicAddress("192.168.1.1"), false); assert.equal(publicAddress("::1"), false); assert.equal(publicAddress("::ffff:127.0.0.1"), false); assert.equal(publicAddress("8.8.8.8"), true);
     await assert.rejects(() => readPublicPage("http://127.0.0.1/", new AbortController().signal), /私有网络|本机/);
   } finally { await f.close(); await s.close(); }
+});
+
+test("DeepSeek V4 按官方说明补全能力：视觉版可读图，未确认项才补，用户设定优先", () => {
+  const unknown = { vision: "unknown", tools: "unknown", reasoning: "unknown" } as const;
+  const model = (id: string, capabilities: any = unknown) => ({ model: id, displayName: id, isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [], capabilities });
+  const c = { id: "ds", name: "DeepSeek", protocol: "compatible", preset: "deepseek", baseUrl: "https://api.deepseek.com/v1", enabled: true, createdAt: "", updatedAt: "",
+    models: [model("deepseek-v4-flash-vision-exp"), model("deepseek-v4-pro"), model("deepseek-v4-flash", { ...unknown, vision: true }), model("other-model")] } as AIConnection;
+  const [vision, pro, userSet, other] = withPresetEfforts(withKnownCapabilities(c)).models;
+  assert.deepEqual(vision.capabilities, { vision: true, tools: true, reasoning: true });
+  assert.deepEqual(vision.supportedReasoningEfforts.map(e => e.reasoningEffort), ["low", "high", "max"]);
+  assert.equal(pro.capabilities?.vision, false);
+  assert.equal(userSet.capabilities?.vision, true);
+  assert.deepEqual(other.capabilities, unknown);
+  assert.equal(contextWindowFor(vision), 1000000);
 });
