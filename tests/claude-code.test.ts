@@ -6,6 +6,8 @@ import path from "node:path";
 import { claudeContent, claudeEnv, invokeClaudeCode, resolveClaudeCommand, setClaudeWorkspace } from "../server/claude-code.ts";
 import { invokeProvider } from "../server/ai-provider.ts";
 import type { AIConnection } from "../shared/ai.ts";
+import { ClaudeSessionWorker, claudeSessionFile, deleteClaudeSession } from "../server/claude-sessions.ts";
+import { Store } from "../server/store.ts";
 
 // A stand-in for claude.exe: records what it received and replays a scripted stream-json session.
 const fakeCli = `
@@ -24,6 +26,7 @@ process.stdin.on("end", () => {
   out({ type: "system", subtype: "init", apiKeySource: mode === "apikey" ? "ANTHROPIC_API_KEY" : "none", tools: [],
     mcp_servers: Object.keys(mcp || {}).map(name => ({ name, status: mode === "mcpfail" ? "failed" : "connected" })) });
   if (mode === "exit") process.exit(3);
+  if (mode === "nosession" && args.includes("--resume") && !args.includes("--fork-session")) { out({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["No conversation found with session ID: x"] }); process.exit(1); }
   if (mode === "limited") { out({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: "API Error: 429 rate limit" }); return; }
   const delta = d => out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: d } });
   if (mode === "mcpfail") { setTimeout(() => {}, 30000); return; }
@@ -45,6 +48,7 @@ process.stdin.on("end", () => {
   delta({ type: "text_delta", text: "你好" });
   if (mode === "slow") { setTimeout(() => delta({ type: "text_delta", text: "，太慢" }), 30000); return; }
   delta({ type: "text_delta", text: "，世界" });
+  out({ type: "assistant", uuid: "assistant-1", message: { content: [{ type: "text", text: "你好，世界" }] } });
   out({ type: "result", subtype: "success", is_error: false, result: "你好，世界", usage: { input_tokens: 5, cache_creation_input_tokens: 100, cache_read_input_tokens: 20, output_tokens: 7 } });
 });
 `;
@@ -217,4 +221,46 @@ test("worker stops on unauthorized tools and on a tool channel that fails to sta
   await assert.rejects(withEnv("rogue", () => f.runtime.worker(f.c, { agentTools: true, reader }, f.settings).run("t", "问题", [], () => {})), /未授权的工具/);
   await assert.rejects(withEnv("mcpfail", () => f.runtime.worker(f.c, { agentTools: true, reader }, f.settings).run("t", "问题", [], () => {})), /工具通道未能启动/);
   f.store.db.close();
+});
+
+test("reading sessions start, continue and fork through the CLI's own session store", async () => {
+  const store = new Store(path.join(dir, "session-store"));
+  try {
+    const worker = new ClaudeSessionWorker(store, connection, { system: "阅读助手", effort: "high", env: env("nosession") });
+    const id = await worker.thread("sonnet");
+    assert.match(id, /^claude:[0-9a-f-]{36}$/);
+    // A session that has never run is not found on resume, so it starts under the same id.
+    const first = await worker.run(id, "第一批", [], () => {});
+    assert.equal(first.text, "你好，世界"); assert.equal(first.turnId, "assistant-1");
+    let got = JSON.parse(readFileSync(record, "utf8"));
+    const value = (flag: string) => got.args[got.args.indexOf(flag) + 1];
+    assert.equal(value("--session-id"), id.slice(7)); assert.ok(!got.args.includes("--no-session-persistence"));
+    assert.equal(got.system, "阅读助手"); assert.equal(value("--effort"), "high");
+    const child = await worker.fork("sonnet", id, undefined, "assistant-1");
+    await worker.run(child, "本章第一批", [], () => {});
+    got = JSON.parse(readFileSync(record, "utf8"));
+    assert.equal(value("--resume"), id.slice(7)); assert.equal(value("--session-id"), child.slice(7)); assert.equal(value("--resume-session-at"), "assistant-1");
+    assert.ok(got.args.includes("--fork-session"));
+    assert.equal(store.get("claudeFork", child), undefined, "fork record is cleared once written");
+  } finally { store.close(); }
+});
+
+test("an interrupted reading request is found in the session file, then the file is removed with its owner", async () => {
+  const config = path.join(dir, "claude-config"), id = "claude:11111111-2222-4333-8444-555555555555";
+  mkdirSync(path.join(config, "projects", "workspace"), { recursive: true });
+  const lines = [
+    { type: "user", message: { content: [{ type: "text", text: "[reading-request:t1] 读第一批" }] } },
+    { type: "assistant", uuid: "u-1", message: { content: [{ type: "text", text: "第一批笔记" }] } },
+    { type: "user", message: { content: "[reading-request:t2] 读第二批" } },
+  ];
+  writeFileSync(path.join(config, "projects", "workspace", `${id.slice(7)}.jsonl`), lines.map(l => JSON.stringify(l)).join("\n"));
+  const store = new Store(path.join(dir, "recover-store"));
+  try {
+    const worker = new ClaudeSessionWorker(store, connection, { system: "", env: { CLAUDE_CONFIG_DIR: config } });
+    const turns = (await worker.rpc("thread/read", { threadId: id })).thread.turns;
+    assert.deepEqual(turns.map((t: any) => [t.id, t.status]), [["u-1", "completed"], ["", "failed"]]);
+    assert.equal(turns[0].items.at(-1).text, "第一批笔记");
+    deleteClaudeSession(id, { CLAUDE_CONFIG_DIR: config });
+    assert.equal(claudeSessionFile(id, { CLAUDE_CONFIG_DIR: config }), undefined);
+  } finally { store.close(); }
 });

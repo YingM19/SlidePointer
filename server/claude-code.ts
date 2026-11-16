@@ -112,8 +112,19 @@ export interface ClaudeRun {
   mcp?: { servers: Record<string, unknown>; tools: Record<string, string[]> };
   onTool?: (event: ClaudeToolEvent) => void;
   maxToolCalls?: number;
+  // A saved CLI session: start it, continue it, or fork another one (optionally at an assistant message).
+  session?: { id: string; resume?: string; at?: string };
 }
+// The CLI keeps no session under this id; the caller may start one instead.
+export class MissingClaudeSession extends Error {}
 const toolText = (content: unknown) => typeof content === "string" ? content : Array.isArray(content) ? content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n") : "";
+
+function sessionArgs(session?: ClaudeRun["session"]) {
+  if (!session) return ["--no-session-persistence"];
+  if (!session.resume) return ["--session-id", session.id];
+  if (session.resume === session.id) return ["--resume", session.id];
+  return ["--resume", session.resume, "--fork-session", "--session-id", session.id, ...(session.at ? ["--resume-session-at", session.at] : [])];
+}
 
 export async function runClaude(connection: AIConnection, run: ClaudeRun, options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}) {
   const command = discoverClaudeCommand({ executable: connection.claudePath, env: options.env });
@@ -125,19 +136,20 @@ export async function runClaude(connection: AIConnection, run: ClaudeRun, option
   await writeFile(promptFile, run.system, "utf8");
   const allowed = new Map(Object.entries(run.mcp?.tools || {}).flatMap(([server, names]) => names.map(name => [`mcp__${server}__${name}`, { server, name }] as const)));
   if (allowed.size) await writeFile(mcpFile, JSON.stringify({ mcpServers: run.mcp!.servers }), "utf8");
-  const args = [...command.args, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence",
+  const args = [...command.args, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+    ...sessionArgs(run.session),
     "--model", run.model, ...(effort ? ["--effort", effort] : []), "--system-prompt-file", promptFile, "--tools", "", "--strict-mcp-config", "--setting-sources", "",
     ...(allowed.size ? ["--mcp-config", mcpFile, "--allowedTools", ...allowed.keys()] : [])];
   const limit = AbortSignal.timeout(options.timeoutMs ?? 300000);
-  type Outcome = { text: string; usage: NonNullable<ProviderResult["usage"]> };
+  type Outcome = { text: string; usage: NonNullable<ProviderResult["usage"]>; turnId: string };
   try {
     return await new Promise<Outcome>((resolve, reject) => {
       const child = spawn(command.command, args, { cwd: workspace, env: claudeEnv(options.env), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
-      let buffer = "", stderr = "", text = "", result: any, settled = false, calls = 0;
-      const finish = (error?: string, value?: Outcome) => {
+      let buffer = "", stderr = "", text = "", result: any, settled = false, calls = 0, turnId = "";
+      const finish = (error?: string | Error, value?: Outcome) => {
         if (settled) return; settled = true;
         run.signal.removeEventListener("abort", stop); limit.removeEventListener("abort", stop);
-        if (error) reject(Error(error)); else resolve(value!);
+        if (error) reject(typeof error === "string" ? Error(error) : error); else resolve(value!);
       };
       const halt = (message: string) => { killTree(child.pid, () => child.kill()); finish(message); };
       const stop = () => halt(run.signal.aborted ? "已停止" : "模型响应超时，请缩小任务后重试");
@@ -172,11 +184,13 @@ export async function runClaude(connection: AIConnection, run: ClaudeRun, option
             }
             if (block?.type === "tool_result") run.onTool?.({ type: "result", id: block.tool_use_id, isError: !!block.is_error, text: toolText(block.content) });
           }
+          if (event.type === "assistant" && typeof event.uuid === "string") turnId = event.uuid;
           if (event.type === "result") result = event;
         }
       });
       child.on("close", code => {
         if (settled) return;
+        if (run.session && /No conversation found/i.test(`${JSON.stringify(result?.errors || [])}\n${stderr}`)) return finish(new MissingClaudeSession("Claude Code 会话不存在"));
         if (!result) return finish(code === 0 ? "Claude Code 响应提前结束，回答结果未确认；请主动重试" : failure(undefined, stderr) + `（进程退出代码 ${code}）`);
         if (result.is_error || result.subtype !== "success") return finish(failure(result, stderr));
         // modelUsage covers every model request in the turn, including tool rounds.
@@ -184,7 +198,7 @@ export async function runClaude(connection: AIConnection, run: ClaudeRun, option
         const u = result.usage || {};
         const input = models.length ? models.reduce((n, m) => n + (m.inputTokens || 0) + (m.cacheReadInputTokens || 0) + (m.cacheCreationInputTokens || 0), 0) : (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
         const output = models.length ? models.reduce((n, m) => n + (m.outputTokens || 0), 0) : u.output_tokens || 0;
-        finish(undefined, { text: text || (typeof result.result === "string" ? result.result : ""), usage: { input, output, total: input + output } });
+        finish(undefined, { text: text || (typeof result.result === "string" ? result.result : ""), usage: { input, output, total: input + output }, turnId });
       });
       child.stdin.on("error", () => {});
       child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content: run.content } }) + "\n");

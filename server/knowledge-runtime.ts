@@ -2,7 +2,7 @@ import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { KnowledgeReadSession, KnowledgeReadTurn, Source } from "../shared/types.ts";
-import { contextWindowFor, type ResearchMessage } from "../shared/ai.ts";
+import { contextWindowFor, type AIConnection, type ResearchMessage } from "../shared/ai.ts";
 import type { Store } from "./store.ts";
 import type { AIConfig } from "./ai-config.ts";
 import type { Scheduler } from "./scheduler.ts";
@@ -10,6 +10,7 @@ import { Codex, instructions, type AIOptions } from "./codex.ts";
 import { invokeProvider } from "./ai-provider.ts";
 import { openPdf, renderPdfPage } from "./pdf.ts";
 import { checkpoint, readingHistory } from "./knowledge-sessions.ts";
+import { ClaudeSessionWorker } from "./claude-sessions.ts";
 
 export interface ReadInput { key: string; prompt: string; sources?: Source[]; pages?: number[]; completePages?: number[] }
 export interface KnowledgeEngine {
@@ -29,7 +30,7 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
   private pdf?: Awaited<ReturnType<typeof openPdf>>;
   private documentId?: string;
   private closing?: Promise<void>;
-  constructor(private store: Store, private config: AIConfig, private scheduler: Scheduler, private adapters: { worker?: (options: AIOptions) => ReadingWorker; invoke?: typeof invokeProvider } = {}) {}
+  constructor(private store: Store, private config: AIConfig, private scheduler: Scheduler, private adapters: { worker?: (options: AIOptions) => ReadingWorker; claude?: (connection: AIConnection) => unknown; invoke?: typeof invokeProvider } = {}) {}
   private async document(id: string) {
     if (id !== this.documentId) {
       await this.pdf?.destroy(); this.pdf = undefined; this.documentId = undefined;
@@ -60,12 +61,18 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
       let resolved = this.choices.get(sessionId);
       if (!resolved) { resolved = await this.config.resolve({ ...session.settings, textOnly: false }, true); this.choices.set(sessionId, resolved); }
       session.settings = { ...resolved.settings, textOnly: false };
-      const native = resolved.connection.protocol === "codex";
+      // Codex threads and Claude Code sessions keep the whole chapter on their side; other services replay it.
+      const protocol = resolved.connection.protocol, native = protocol === "codex" || protocol === "claude-code";
       const options = { ephemeral: false, agentTools: false, webSearch: false, effort: session.settings.reasoningEffort, executable: resolved.connection.codexPath };
       let worker: ReadingWorker | undefined;
       if (native) {
         worker = this.workers.get(sessionId);
-        if (!worker) { worker = this.adapters.worker?.(options) || new Codex(this.store.dir, options); this.workers.set(sessionId, worker); }
+        if (!worker) {
+          worker = protocol === "claude-code"
+            ? (this.adapters.claude?.(resolved.connection) || new ClaudeSessionWorker(this.store, resolved.connection, { effort: options.effort, system: instructions })) as unknown as ReadingWorker
+            : this.adapters.worker?.(options) || new Codex(this.store.dir, options);
+          this.workers.set(sessionId, worker);
+        }
         if (!session.threadId && session.parent?.threadId && session.parent.turnId && session.parent.connectionId === resolved.connection.id && session.parent.model === resolved.model.model)
           session.threadId = await worker.fork(resolved.model.model, session.parent.threadId, undefined, session.parent.turnId);
         session.threadId = await worker.thread(resolved.model.model, session.threadId, options);

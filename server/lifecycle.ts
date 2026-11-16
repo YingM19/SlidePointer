@@ -1,3 +1,4 @@
+import { deleteClaudeSession, isClaudeSession } from "./claude-sessions.ts";
 import { readdirSync, unlinkSync, existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -372,6 +373,10 @@ export class Lifecycle {
       if (this.cleaning.has(r.id)) continue;
       this.cleaning.add(r.id);
       try {
+        if (isClaudeSession(r.id)) {
+          deleteClaudeSession(r.id); this.store.remove("claudeFork", r.id); this.store.remove("ownedThread", r.id);
+          continue;
+        }
         await this.ai.connect();
         await this.ai.rpc("thread/delete", { threadId: r.id });
         this.store.remove("ownedThread", r.id);

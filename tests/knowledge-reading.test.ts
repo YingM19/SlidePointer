@@ -272,9 +272,9 @@ test("API连接重放文字历史、只发送当前批图像，超过预算时�
   } finally { await engine.close(); f.close(); }
 });
 
-test("未声明上下文长度的 Claude 模型按 200k 计算，读完长章节也不压缩", async () => {
+test("未声明上下文长度的 Claude API 模型按 200k 计算，读完长章节也不压缩", async () => {
   const f = fixture([1]); let compactions = 0, calls = 0;
-  const claude = { resolve: async (settings: object) => ({ settings: { ...settings, model: "sonnet", connectionId: "claude" }, connection: { id: "claude", protocol: "claude-code" }, model: { model: "sonnet" } }), usage: () => {}, vault: { get: async () => "" } } as unknown as AIConfig;
+  const claude = { resolve: async (settings: object) => ({ settings: { ...settings, model: "sonnet", connectionId: "claude" }, connection: { id: "claude", protocol: "anthropic" }, model: { model: "claude-sonnet-4-5" } }), usage: () => {}, vault: { get: async () => "" } } as unknown as AIConfig;
   const engine = new PersistentKnowledgeRuntime(f.store, claude, new Scheduler(), { invoke: async (_c, _k, input) => { calls++; if (input.messages[0].text.includes("压缩为可继续阅读")) compactions++; return { text: "本批笔记".repeat(300), toolCalls: [] }; } });
   try {
     const session = createReadingSession(f.store, f.course.id, [f.docs[0].id], { connectionId: "claude", model: "sonnet" }, "章节", 114, f.docs[0].id);
@@ -282,5 +282,22 @@ test("未声明上下文长度的 Claude 模型按 200k 计算，读完长章节
     for (let b = 0; b < 19; b++) await engine.read(session.id, { key: `batch:${b}`, prompt: `第${b + 1}批`, sources: Array.from({ length: 6 }, (_, i) => ({ id: `p${b * 6 + i + 1}`, documentId: f.docs[0].id, page: b * 6 + i + 1, text: "页面原文".repeat(150) })) }, new AbortController().signal);
     assert.equal(calls, 19); assert.equal(compactions, 0);
     assert.equal(f.store.get<KnowledgeReadSession>("knowledgeSession", session.id)?.portableMemory, undefined);
+  } finally { await engine.close(); f.close(); }
+});
+
+test("Claude Code 连接按原生会话阅读：每批只发本批，检查点可分叉", async () => {
+  const f = fixture([1]); const runs: { thread: string; text: string }[] = []; let invoked = 0;
+  const worker = { thread: async (_m: string, id?: string) => id || "claude:session", fork: async () => "claude:child", shutdown: async () => {}, rpc: async () => ({ thread: { turns: [] } }),
+    run: async (thread: string, text: string) => { runs.push({ thread, text }); return { status: "completed", text: `笔记${runs.length}`, turnId: `turn-${runs.length}` }; } };
+  const engine = new PersistentKnowledgeRuntime(f.store, config("claude-code"), new Scheduler(), { claude: () => worker, invoke: async () => { invoked++; return { text: "", toolCalls: [] }; } });
+  try {
+    const session = createReadingSession(f.store, f.course.id, [f.docs[0].id], { connectionId: "claude-code", model: "test" }, "章节", 2, f.docs[0].id);
+    await engine.read(session.id, { key: "one", prompt: "第一批内容", completePages: [1] }, new AbortController().signal);
+    await engine.read(session.id, { key: "two", prompt: "第二批内容", completePages: [2] }, new AbortController().signal);
+    assert.equal(invoked, 0, "不走重放和压缩");
+    assert.deepEqual(runs.map(r => r.thread), ["claude:session", "claude:session"]);
+    assert.ok(!runs[1].text.includes("第一批内容"), "第二批不重发第一批");
+    const done = f.store.get<KnowledgeReadSession>("knowledgeSession", session.id)!;
+    assert.equal(done.checkpoint?.mode, "fork"); assert.equal(done.checkpoint?.threadId, "claude:session"); assert.equal(done.checkpoint?.turnId, "turn-2");
   } finally { await engine.close(); f.close(); }
 });
