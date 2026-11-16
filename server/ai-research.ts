@@ -132,7 +132,7 @@ export class ResearchService {
       if (r.mode === "compare") await this.compare(r, controller);
       else {
         const resolved = await this.config.resolve(r.settings, !r.settings.textOnly);
-        if (resolved.connection.protocol === "codex") await this.codexRun(r, controller);
+        if (resolved.connection.protocol === "codex" || resolved.connection.protocol === "claude-code") await this.codexRun(r, controller);
         else await this.nativeRun(r, controller);
       }
       if (r.state === "running") {
@@ -221,7 +221,8 @@ export class ResearchService {
         if (event.text !== undefined) r.answer = event.text;
         if (event.tokenUsage) usage = event.tokenUsage;
         if (event.sources) r.sources = [...new Map([...r.sources, ...event.sources].map(s => [s.id, s])).values()];
-        if (event.activity?.kind === "web") {
+        // Claude Code reaches the web only through the app broker, which records its own steps.
+        if (event.activity?.kind === "web" && resolved.connection.protocol === "codex") {
           const a = event.activity; if (a.state === "running" && !r.steps.some(s => s.id === a.id)) { r.calls++; if (r.calls >= r.callLimit) controller.abort("budget"); }
           r.steps = [...r.steps.filter(s => s.id !== a.id), { id: a.id, title: a.title, detail: a.detail, state: a.state, tool: "codex_web", createdAt: new Date().toISOString() }];
           if (a.links?.length) r.webSources = [...new Map([...(r.webSources || []), ...a.links.map(l => ({ url: l.url, title: l.title, text: "由 Codex 搜索返回" }))].map(s => [s.url, s])).values()];
