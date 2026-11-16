@@ -11,9 +11,12 @@ import type {
   ImportJob,
   KnowledgeRevision,
   KnowledgeReadSession,
+  LearningNote,
+  MindMap,
   ReadingSession,
   Turn,
 } from "../shared/types.ts";
+import type { AIMemory, ResearchArtifact, ResearchRun } from "../shared/ai.ts";
 
 export class Lifecycle {
   private cleaning = new Set<string>();
@@ -60,6 +63,63 @@ export class Lifecycle {
         .map((c) => c.name),
       originalFilesUntouched: true,
     };
+  }
+  // Course-wide results go with the course; work tied to a courseware stays as independent records.
+  private courseRecords(id: string) {
+    const of = <T extends { courseId?: string }>(kind: string) => this.store.all<T & { id: string }>(kind).filter((r) => r.courseId === id);
+    const maps = of<MindMap>("mindMap");
+    return {
+      knowledge: of<KnowledgeRevision>("knowledge"),
+      courseMaps: maps.filter((m) => m.scope === "course"),
+      documentMaps: maps.filter((m) => m.scope !== "course"),
+      memories: of<AIMemory>("aiMemory"),
+      conversations: of<Conversation>("conversation"),
+      notes: of<LearningNote>("note"),
+      research: of<ResearchRun>("aiResearch"),
+      artifacts: of<ResearchArtifact>("aiArtifact"),
+    };
+  }
+  impactCourse(id: string) {
+    const c = this.store.get<Course>("course", id);
+    if (!c) throw Error("课程不存在");
+    const r = this.courseRecords(id);
+    return {
+      name: c.name,
+      chapters: c.documentIds.length,
+      root: c.root,
+      knowledge: r.knowledge.length,
+      mindMaps: r.courseMaps.length,
+      memories: r.memories.length,
+      conversations: r.conversations.length,
+      notes: r.notes.filter((n) => !n.deletedAt).length,
+      research: r.research.length + r.artifacts.filter((a) => !a.deletedAt).length,
+      originalFilesUntouched: true,
+    };
+  }
+  deleteCourse(id: string, forget: (id: string) => void, cancelKnowledge: (id: string) => void) {
+    if (!this.store.get<Course>("course", id)) return { deleted: true };
+    const r = this.courseRecords(id);
+    if (r.research.some((x) => ["queued", "running"].includes(x.state))) throw Error("本课程有正在进行的研究任务，请先停止后再删除课程");
+    forget(id);
+    for (const k of r.knowledge) if (k.state === "building") cancelKnowledge(k.id);
+    this.store.transaction(() => {
+      this.store.remove("course", id);
+      for (const k of r.knowledge) this.store.remove("knowledge", k.id);
+      for (const m of r.courseMaps) this.store.remove("mindMap", m.id);
+      for (const m of r.memories) this.store.remove("aiMemory", m.id);
+      const detach = <T extends { id: string; courseId?: string }>(kind: string, records: T[]) => {
+        for (const record of records) this.store.put(kind, { ...record, courseId: undefined });
+      };
+      detach("mindMap", r.documentMaps);
+      detach("conversation", r.conversations);
+      detach("note", r.notes);
+      detach("aiResearch", r.research);
+      detach("aiArtifact", r.artifacts);
+      if (r.notes.length) this.store.put("meta", { id: "notes", version: (this.store.get<{ version: number }>("meta", "notes")?.version || 0) + 1 });
+    });
+    this.collect();
+    this.notify();
+    return { deleted: true };
   }
   impactConversation(id: string) {
     const c = this.store.conversation(id);

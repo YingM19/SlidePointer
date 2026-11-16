@@ -221,3 +221,34 @@ test("旧笔记迁移前备份；重新启动不清空历史正文或自动执�
     rmSync(f.dir, { recursive: true, force: true });
   }
 });
+
+test("删除课程只清除课程层面的结果，课件、对话与笔记转为独立记录", async () => {
+  const f = setup();
+  try {
+    await finished(f.knowledge, f.knowledge.start(f.course.id, {}).id);
+    const note = f.notes.create({ courseId: f.course.id, documentId: f.docs[0].id, text: "课程笔记" });
+    f.store.put("mindMap", { id: "course-map", scope: "course", courseId: f.course.id });
+    f.store.put("mindMap", { id: "doc-map", scope: "document", courseId: f.course.id, documentId: f.docs[0].id });
+    f.store.put("aiMemory", { id: "m1", courseId: f.course.id, kind: "glossary", title: "术语", text: "x" });
+    f.store.put("aiMemory", { id: "m2", kind: "preference", title: "通用", text: "y" });
+    f.store.put("aiResearch", { id: "run", courseId: f.course.id, documentId: f.docs[0].id, state: "running" });
+    const impact = f.lifecycle.impactCourse(f.course.id);
+    assert.deepEqual(impact, { name: "测试课程", chapters: 2, root: undefined, knowledge: 1, mindMaps: 1, memories: 1, conversations: 1, notes: 1, research: 1, originalFilesUntouched: true });
+    const forget = (id: string) => f.courses.forget(id);
+    assert.throws(() => f.lifecycle.deleteCourse(f.course.id, forget, id => f.knowledge.cancel(id)), /正在进行的研究任务/);
+    f.store.put("aiResearch", { id: "run", courseId: f.course.id, documentId: f.docs[0].id, state: "completed" });
+    f.lifecycle.deleteCourse(f.course.id, forget, id => f.knowledge.cancel(id));
+    assert.equal(f.courses.list().length, 0);
+    assert.equal(f.knowledge.list(f.course.id).length, 0);
+    assert.equal(f.store.get("mindMap", "course-map"), undefined);
+    assert.equal(f.store.get<{ courseId?: string }>("mindMap", "doc-map")!.courseId, undefined);
+    assert.deepEqual(f.store.all<{ id: string }>("aiMemory").map(m => m.id), ["m2"]);
+    assert.equal(f.store.conversation(f.conversation.id)!.courseId, undefined);
+    assert.equal(f.notes.get(note.id).courseId, undefined);
+    assert.ok(f.notes.list().some(n => n.id === note.id), "detached notes appear with independent courseware");
+    assert.equal(f.store.get<{ courseId?: string }>("aiResearch", "run")!.courseId, undefined);
+    assert.equal(f.docs.filter(d => f.store.document(d.id)).length, 2);
+    assert.throws(() => f.lifecycle.impactCourse(f.course.id), /课程不存在/);
+    assert.deepEqual(f.lifecycle.deleteCourse(f.course.id, forget, () => {}), { deleted: true });
+  } finally { f.close(); }
+});

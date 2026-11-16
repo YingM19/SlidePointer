@@ -33,6 +33,7 @@ export function MaterialsWorkspace({
     } | null>(null),
     [deleteChats, setDeleteChats] = useState(false),
     [removed, setRemoved] = useState("");
+  const [courseImpact, setCourseImpact] = useState<{ id: string; name: string; chapters: number; root?: string; knowledge: number; mindMaps: number; memories: number; conversations: number; notes: number; research: number } | null>(null);
   const perform = async (fn: () => Promise<void>) => {
     setBusy(true);
     setMessage("");
@@ -164,7 +165,26 @@ export function MaterialsWorkspace({
                 <input name="name" aria-label="课程名称" defaultValue={course.name} maxLength={100} required />
                 <button disabled={busy}>保存名称</button>
               </form>
+              <div className="theme-row"><small>删除课程不会删除课件和硬盘原文件。</small><span className="flex-space" /><button className="danger" disabled={busy} onClick={() => void perform(async () => setCourseImpact({ ...await api<Omit<NonNullable<typeof courseImpact>, "id">>(`/courses/${course.id}/impact`), id: course.id }))}>删除课程…</button></div>
             </details>
+            {courseImpact && (
+              <div className="delete-impact" role="alertdialog" aria-label="确认删除课程">
+                <h3>删除课程“{courseImpact.name}”？</h3>
+                <p>将删除课程本身、{courseImpact.knowledge} 份章节整理结果、{courseImpact.mindMaps} 份整课导图和 {courseImpact.memories} 条仅用于本课程的学习背景{courseImpact.root ? "，并停止监听绑定目录" : ""}。删除后不能恢复。</p>
+                <p>{courseImpact.chapters} 份课件保留在「全部资料」中，硬盘原文件不受影响。本课程的 {courseImpact.conversations} 个对话、{courseImpact.notes} 条笔记和 {courseImpact.research} 项研究记录会保留，转为独立课件的记录。</p>
+                <div>
+                  <button disabled={busy} onClick={() => setCourseImpact(null)}>取消</button>
+                  <button className="danger" disabled={busy} onClick={() => void perform(async () => {
+                    await api(`/courses/${courseImpact.id}`, { method: "DELETE" });
+                    localStorage.removeItem("pointer-position-" + courseImpact.id);
+                    await refresh();
+                    // Switching course remounts this page, so the confirmation goes to the app-wide notice.
+                    r.setError(`已删除课程“${courseImpact.name}”；课件仍在资料库中。`);
+                    r.setCourseId("");
+                  })}>删除课程</button>
+                </div>
+              </div>
+            )}
             <section className="course-section">
               <div className="course-section-heading">
                 <h3>课程章节</h3>

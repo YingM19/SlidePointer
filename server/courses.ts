@@ -357,6 +357,15 @@ export class CourseService {
       });
     }
   }
+  // Stops watching a course's folder before its record is deleted.
+  forget(id: string) {
+    this.get(id);
+    if (this.syncing.has(id)) throw Error("课程正在同步，请稍后重试");
+    this.watchers.get(id)?.close();
+    this.watchers.delete(id);
+    clearTimeout(this.timers.get(id));
+    this.timers.delete(id);
+  }
   close() {
     clearInterval(this.periodic);
     for (const t of this.timers.values()) clearTimeout(t);

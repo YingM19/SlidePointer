@@ -222,6 +222,18 @@ export function powerRoutes(
       ),
     ),
   );
+  app.get("/api/courses/:id/impact", (req, res) =>
+    res.json(lifecycle.impactCourse(req.params.id)),
+  );
+  app.delete("/api/courses/:id", (req, res) =>
+    res.json(
+      lifecycle.deleteCourse(
+        req.params.id,
+        (id) => courses.forget(id),
+        (id) => knowledge.cancel(id),
+      ),
+    ),
+  );
   const grants = new Map<string, { root: string; expires: number }>();
   let choosing = false;
   app.post("/api/folders/pick", async (_req, res) => {
