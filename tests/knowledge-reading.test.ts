@@ -50,7 +50,7 @@ function fixture(counts = [12, 6]) {
   return { dir, store, docs, course, courses, calls, revision, reader, factory, setBefore(fn: typeof before) { before = fn; }, setAfter(fn: typeof after) { after = fn; }, closes: () => closes, close() { courses.close(); store.close(); assert.ok(path.resolve(dir).startsWith(path.join(os.tmpdir(), "reading-v4-"))); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test("60页图文完整覆盖，仅10批读取；所有章节固定同一课程起点", async () => {
+test("60页图文完整覆盖，仅10批读取；后一章从前面章节成果写入课程后的检查点开始", async () => {
   const f = fixture([60, 6]);
   try {
     const r = f.revision(); await f.reader.run(r.id, new AbortController().signal);
@@ -61,8 +61,9 @@ test("60页图文完整覆盖，仅10批读取；所有章节固定同一课程�
     assert.equal(first.length, 10); assert.ok(first.every(c => c.input.sources?.every(s => s.image)));
     assert.deepEqual(first.flatMap(c => c.input.pages), Array.from({ length: 60 }, (_, i) => i + 1));
     const children = result.chapters.map(c => f.store.get<KnowledgeReadSession>("knowledgeSession", c.sessionId!)!);
-    assert.deepEqual(children[0].parent, children[1].parent);
-    assert.equal(children[0].parent!.through, result.baseCheckpoint!.through);
+    assert.equal(children[0].parent!.through, result.baseCheckpoint!.through, "第一章从课程框架开始");
+    assert.ok(children[1].parent!.through > children[0].parent!.through);
+    assert.ok(readingHistory(f.store, children[1].parent).some(h => h.prompt.includes(`《${f.docs[0].name}》当前章节成果`)), "第二章继承第一章成果");
     assert.equal(new Set(first.map(c => c.sessionId)).size, 1);
     const integrations = f.calls.filter(c => c.input.key.startsWith("integrate:"));
     assert.equal(integrations.length, 2); assert.ok(integrations.every(c => c.sessionId === result.courseSessionId && c.input.sources?.every(s => !s.image)));
