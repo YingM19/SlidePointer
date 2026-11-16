@@ -39,7 +39,7 @@ export function WorkspaceSidebar({
     <aside className="workspace-sidebar" aria-label="工作区导航">
       <div className="sidebar-brand">
         <Icon name="slides" size={20} />
-        <span>Power Pointer</span>
+        <span>SlidePointer</span>
         <button
           className="sidebar-close"
           aria-label="收起导航"

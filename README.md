@@ -1,4 +1,4 @@
-# Power Pointer
+# SlidePointer
 
 Windows 本地课件阅读助手。直接打开 PDF、PPT、PPTX，提供独立的阅读、总览、资料、导图、历史和研究工作区，以及就地点读、递归解释窗和跨课件引用。
 

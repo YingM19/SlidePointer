@@ -59,7 +59,7 @@ try {
     const running = await r.json().catch(() => null);
     if (running?.app === "lecture-copilot") {
       if (running.build !== before) throw Error("应用正在运行其他版本。请关闭原启动窗口，再运行启动.cmd。");
-      console.log("[就绪] 已打开正在运行的 Power Pointer。");
+      console.log("[就绪] 已打开正在运行的 SlidePointer。");
       open();
       process.exit(0);
     }

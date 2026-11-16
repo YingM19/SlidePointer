@@ -215,7 +215,7 @@ export class Codex extends EventEmitter {
             error: {
               code: -32601,
               message:
-                "Unapproved tools and approvals are disabled in Power Pointer",
+                "Unapproved tools and approvals are disabled in SlidePointer",
             },
           }) + "\n",
         );
@@ -247,7 +247,7 @@ export class Codex extends EventEmitter {
     await this.rpc("initialize", {
       clientInfo: {
         name: "lecture_copilot",
-        title: "Power Pointer",
+        title: "SlidePointer",
         version: "0.1.0",
       },
       capabilities: { experimentalApi: true },

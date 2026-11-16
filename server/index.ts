@@ -1094,7 +1094,7 @@ for (const d of store.all<Document>("document"))
   if (d.indexStatus === "indexing") void indexDocument(d);
 const server = app.listen(port, "127.0.0.1", (error?: Error) => {
   if (error) { console.error(listenFailure(error, port)); process.exit(1); }
-  console.log(`Power Pointer：${origin}`);
+  console.log(`SlidePointer：${origin}`);
 },
 );
 const shutdown = () => {

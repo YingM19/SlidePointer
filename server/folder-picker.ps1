@@ -1,6 +1,6 @@
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Power Pointer - Select a course folder'
+$dialog.Description = 'SlidePointer - Select a course folder'
 $dialog.ShowNewFolderButton = $false
 $owner = New-Object System.Windows.Forms.Form
 $owner.TopMost = $true

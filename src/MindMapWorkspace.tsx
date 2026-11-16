@@ -407,7 +407,7 @@ export function MindMapWorkspace({ r }: { r: Reader }) {
     try {
       if (file.size > 1000000) throw Error("导图文件超过 1 MB，请精简节点备注后重试");
       const input = JSON.parse(await file.text()) as Partial<MindMap>;
-      if (!Array.isArray(input.nodes) || typeof input.rootId !== "string") throw Error("文件不是 Power Pointer 思维导图");
+      if (!Array.isArray(input.nodes) || typeof input.rootId !== "string") throw Error("文件不是 SlidePointer 思维导图");
       validateMindMapNodes(input.nodes as MindMapNode[], input.rootId);
       if (mapRef.current && dirty.current.has(mapRef.current.id)) await saveSnapshot(mapRef.current);
       const validDocuments = new Set(targetDocuments.map(document => document.id)), idMap = new Map<string, string>();

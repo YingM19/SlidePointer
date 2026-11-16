@@ -26,7 +26,7 @@ export async function readPublicPage(url: string, signal: AbortSignal, redirects
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(20000)]);
   const response = await new Promise<{ status: number; location?: string; type: string; body: string }>((resolve, reject) => {
     const request = (u.protocol === "https:" ? https : http).request(u, {
-      method: "GET", signal: timeout, headers: { "User-Agent": "PowerPointer/1.0", Accept: "text/html,text/plain,application/json", "Accept-Encoding": "identity" },
+      method: "GET", signal: timeout, headers: { "User-Agent": "SlidePointer/1.0", Accept: "text/html,text/plain,application/json", "Accept-Encoding": "identity" },
       lookup: ((_host: string, opts: any, cb: any) => opts?.all ? cb(null, addresses) : cb(null, addresses[0].address, addresses[0].family)) as any,
     }, res => {
       const buffers: Buffer[] = []; let size = 0;
@@ -96,7 +96,7 @@ export class ExternalServices {
       if (!result || result.error) throw Error("MCP 拒绝了请求，请检查服务器与工具配置");
       return result.result;
     };
-    const initialized = await send("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "PowerPointer", version: "1.0.0" } });
+    const initialized = await send("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "SlidePointer", version: "1.0.0" } });
     if (!initialized?.capabilities?.tools) throw Error("MCP 服务器没有提供工具能力");
     await send("notifications/initialized", {}, true);
     return send;

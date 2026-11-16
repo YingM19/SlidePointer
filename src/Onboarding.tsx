@@ -22,7 +22,7 @@ export function Welcome({ r, onGuide, onManual }: { r: Reader; onGuide: () => vo
     } finally { setBusy(false); }
   };
   return <main className="welcome learning-welcome">
-    <span className="welcome-eyebrow">POWER POINTER</span>
+    <span className="welcome-eyebrow">SLIDEPOINTER</span>
     <h1>{r.course ? "从第一份课件开始" : "打开课件，留住你的理解"}</h1>
     <p>{r.course ? r.course.name : "在原页旁解释难点、记下思路，下次接着读。"}</p>
     <div className="welcome-entries">

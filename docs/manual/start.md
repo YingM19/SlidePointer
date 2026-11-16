@@ -4,7 +4,7 @@
 
 ## 打开课件 <!-- open -->
 
-启动 Power Pointer，在欢迎页选择「打开课件」，导入 PDF、PPT 或 PPTX。也可以拖入文件，或点击「体验示例」。
+启动 SlidePointer，在欢迎页选择「打开课件」，导入 PDF、PPT 或 PPTX。也可以拖入文件，或点击「体验示例」。
 
 PDF 可以直接阅读。PPT 和 PPTX 需要本机安装 PowerPoint 或 LibreOffice，转换后显示静态页面。只有 PDF 时无需安装转换软件。
 

@@ -76,7 +76,7 @@ export default function ManualPage({ route, onClose }: { route: ManualRoute; onC
     else { const frame = requestAnimationFrame(focusContent); return () => cancelAnimationFrame(frame); }
   }, [searching]);
   useEffect(() => {
-    document.title = `${article?.title || "使用手册"} · Power Pointer`;
+    document.title = `${article?.title || "使用手册"} · SlidePointer`;
   }, [article]);
   useEffect(() => () => { document.title = originalTitle.current; }, []);
   useEffect(() => {
@@ -114,7 +114,7 @@ export default function ManualPage({ route, onClose }: { route: ManualRoute; onC
   return <div className="manual-page" onClick={followLink}>
     <a className="manual-skip" href="#manual-main" onClick={event => { event.preventDefault(); content.current?.focus(); }}>跳到正文</a>
     <header className="manual-header">
-      <div className="manual-header-brand"><button className="manual-return" onClick={onClose}><Icon name="left" size={17} /><span>返回工作区</span></button><span className="manual-brand">Power Pointer <span>/ 使用手册</span></span></div>
+      <div className="manual-header-brand"><button className="manual-return" onClick={onClose}><Icon name="left" size={17} /><span>返回工作区</span></button><span className="manual-brand">SlidePointer <span>/ 使用手册</span></span></div>
       <label className="manual-search"><Icon name="search" size={18} /><input ref={search} aria-label="搜索使用手册" placeholder="搜索问题、功能或操作…" value={query} onChange={event => setQuery(event.target.value)} maxLength={160} />{query && <button type="button" aria-label="清除手册搜索" onClick={() => { setQuery(""); search.current?.focus(); }}><Icon name="close" size={16} /></button>}</label>
       <button className="manual-menu-toggle" aria-label="打开手册目录" aria-haspopup="dialog" aria-expanded={drawer} onClick={event => { dialogOpener.current = event.currentTarget; setDrawer(true); }}><Icon name="menu" size={19} /><span>目录</span></button>
     </header>
@@ -140,7 +140,7 @@ export default function ManualPage({ route, onClose }: { route: ManualRoute; onC
               </section>)}</article>
               <nav className="manual-pagination" aria-label="相邻章节">{articleIndex > 0 ? <a href={manualHref(manualArticles[articleIndex - 1].id)}><small>上一章</small><span>← {manualArticles[articleIndex - 1].title}</span></a> : <span />}{articleIndex < manualArticles.length - 1 && <a href={manualHref(manualArticles[articleIndex + 1].id)}><small>下一章</small><span>{manualArticles[articleIndex + 1].title} →</span></a>}</nav>
             </> : <>
-              <div className="manual-breadcrumb">Power Pointer / 使用手册</div>
+              <div className="manual-breadcrumb">SlidePointer / 使用手册</div>
               <h1 className="manual-home-title" tabIndex={-1}>使用手册</h1>
               <p className="manual-lead">从打开课件到整理学习成果，按步骤开始，或查找需要的操作。</p>
               <a className="manual-start" href={manualHref("start")}><span className="manual-start-icon"><Icon name="steps" size={27} /></span><span><small>首次使用</small><strong>快速上手</strong><span>打开课件 → 理解难点 → 保存笔记</span></span><Icon name="right" size={22} /></a>
