@@ -106,7 +106,8 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
           const budget = Math.floor((contextWindowFor(resolved.model) || 32000) * .75);
           const inputEstimate = prompt.length / 2 + turn.images.length * 1600;
           let offset = session.portableMemory?.through || 0;
-          const estimated = (h: typeof history) => h.reduce((n, t) => n + (t.prompt.length + t.answer.length + t.sources.reduce((n, s) => n + s.text.length, 0)) / 2 + t.images.length * 1600, 0);
+          // Earlier batches replay as their page text and notes; only the current batch carries images.
+          const estimated = (h: typeof history) => h.reduce((n, t) => n + (t.prompt.length + t.answer.length + t.sources.reduce((n, s) => n + s.text.length, 0)) / 2, 0);
           while (estimated(history.slice(offset)) + inputEstimate + (session.portableMemory?.text.length || 0) / 2 > budget && history.length > offset) {
             let end = offset + 1;
             while (end < history.length - 1 && estimated(history.slice(offset, end + 1)) < budget / 2) end++;
@@ -116,7 +117,7 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
           }
           const messages: ResearchMessage[] = [];
           if (session.portableMemory) messages.push({ role: "user", text: `此前阅读的压缩记忆（非原文）：${session.portableMemory.text}` });
-          for (const h of history.slice(offset)) messages.push({ role: "user", text: `${h.prompt}\n资料与页码：${JSON.stringify(h.sources)}`, images: await images(h.images) }, { role: "assistant", text: h.answer });
+          for (const h of history.slice(offset)) messages.push({ role: "user", text: `${h.prompt}\n资料与页码：${JSON.stringify(h.sources)}${h.images.length ? "\n（这些页的图像已在当时阅读，此处只保留文字与笔记）" : ""}` }, { role: "assistant", text: h.answer });
           messages.push({ role: "user", text: prompt, images: await images(turn.images) });
           const result = await (this.adapters.invoke || invokeProvider)(resolved.connection, await this.config.vault.get(resolved.connection.id), { model: resolved.model.model, system: instructions, messages, effort: session.settings.reasoningEffort, signal });
           if (!result.text.trim()) throw Error("模型未返回阅读结果");

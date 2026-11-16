@@ -248,7 +248,7 @@ for (const notifyStart of [true, false]) test(`模型完成后连接丢失：${n
   } finally { await engine.close(); f.close(); }
 });
 
-test("API连接重放原始图文消息，超过预算时保存压缩检查点", async () => {
+test("API连接重放文字历史、只发送当前批图像，超过预算时保存压缩检查点", async () => {
   const f = fixture([1]); const requests: any[] = [];
   const engine = new PersistentKnowledgeRuntime(f.store, config("openai", 5000), new Scheduler(), { invoke: async (_connection, _key, input) => { requests.push(structuredClone(input.messages)); return { text: input.messages[0].text.includes("压缩") ? "压缩记忆 [依据](source:page-one)" : "已读 [依据](source:page-one)", toolCalls: [] }; } });
   try {
@@ -259,8 +259,9 @@ test("API连接重放原始图文消息，超过预算时保存压缩检查点",
     await engine.read(session.id, { key: "one", prompt: "第一批", sources: [{ id: "page-one", documentId: f.docs[0].id, page: 1, text: "原文信息", image: true }] }, new AbortController().signal);
     await engine.read(session.id, { key: "two", prompt: "第二批" }, new AbortController().signal);
     assert.ok(JSON.stringify(requests[1]).includes("原文信息")); assert.equal(requests[1][1].role, "assistant");
-    assert.match(requests[1][0].images[0], /^data:image\/png;base64,/);
-    assert.equal(requests[1][0].images[0], requests[0][0].images[0]);
+    assert.match(requests[0][0].images[0], /^data:image\/png;base64,/);
+    assert.equal(requests[1][0].images, undefined, "旧批次不重复上传图像");
+    assert.match(requests[1][0].text, /只保留文字与笔记/);
     const s = f.store.get<KnowledgeReadSession>("knowledgeSession", session.id)!;
     s.turns[0].prompt = "长历史".repeat(4000); f.store.put("knowledgeSession", s);
     await engine.read(session.id, { key: "three", prompt: "第三批" }, new AbortController().signal);
