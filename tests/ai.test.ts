@@ -193,7 +193,7 @@ test("原生协议：四种接口保留图像、工具调用、用量与服务�
       assert.equal(result.text, "中文"); assert.equal(streamed, "中文"); assert.equal(result.toolCalls[0].name, "read"); assert.deepEqual(result.toolCalls[0].arguments, { page: 2 }); assert.equal(result.usage?.total, 17);
       const request = s.requests[0]; assert.ok(JSON.stringify(request.body).includes("YQ==")); assert.ok(JSON.stringify(request.body).includes("read"));
       if (protocol === "compatible" || protocol === "openai") assert.equal(request.headers.authorization, "Bearer fixture-key");
-      if (protocol === "anthropic") { assert.equal(request.headers["x-api-key"], "fixture-key"); assert.equal(request.body.max_tokens, 8192); }
+      if (protocol === "anthropic") { assert.equal(request.headers["x-api-key"], "fixture-key"); assert.equal(request.body.max_tokens, 8192); assert.deepEqual(request.body.messages.at(-1).content.at(-1).cache_control, { type: "ephemeral" }); }
       if (protocol === "gemini") { assert.equal(request.headers["x-goog-api-key"], "fixture-key"); assert.equal(result.toolCalls[0].thoughtSignature, "opaque-signature"); }
       assert.ok(!request.path.includes("fixture-key"));
     } finally { await s.close(); }

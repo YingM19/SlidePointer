@@ -95,6 +95,9 @@ export async function invokeProvider(connection: AIConnection, key: string, req:
     route = "/messages"; delete headers.Authorization;
     headers["x-api-key"] = key; headers["anthropic-version"] = "2023-06-01";
     const messages = merge(messagesWithImages.map(m => ({ role: m.role === "tool" ? "user" : m.role, content: m.providerData?.protocol === protocol ? m.providerData.content : m.role === "tool" ? [{ type: "tool_result", tool_use_id: m.toolCallId, content: m.text }] : [...(m.text ? [{ type: "text", text: m.text }] : []), ...(m.toolCalls || []).map(t => ({ type: "tool_use", id: t.id, name: t.name, input: t.arguments })), ...(m.images || []).map(url => { const [, media_type, data] = /^data:([^;]+);base64,(.*)$/.exec(url)!; return { type: "image", source: { type: "base64", media_type, data } }; })] })), "content");
+    // Replayed history is a stable prefix; marking the newest block lets the next request read it from cache.
+    const tail = messages.at(-1)?.content?.at(-1);
+    if (tail && !tail.cache_control && ["text", "image", "tool_result"].includes(tail.type)) messages.at(-1).content[messages.at(-1).content.length - 1] = { ...tail, cache_control: { type: "ephemeral" } };
     body = { model: req.model, system: req.system, messages, max_tokens: 8192, stream: true, ...(tools.length ? { tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) } : {}) };
     if (req.effort) {
       if (/^budget:\d+$/.test(req.effort)) { const budget = Number(req.effort.slice(7)); if (budget < 1024 || budget > 32768) throw Error("思考预算应为 budget:1024 至 budget:32768"); body.thinking = { type: "enabled", budget_tokens: budget }; body.max_tokens = budget + 8192; }
