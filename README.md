@@ -28,6 +28,7 @@ npm start
 - Codex 自动检测本机 CLI 与已有 ChatGPT 登录，也可在连接设置填写 `codex.exe` 或 npm 生成的 `codex.cmd`、`codex.ps1` 路径。登录和刷新由官方 CLI 处理；额度只显示 App Server 实际返回的数据。订阅连接不会使用 API Key，也不会自动转向其他收费服务。
 - API 密钥仅在后端通过 Windows 当前用户 DPAPI 加密后存入本地数据库，不回传明文，不放进浏览器存储或导出文件。本地模型服务可以不填密钥。切换服务是用户的明确选择，应用不会自动备用切换。
 - 问答输入区直接选择助手、模型和资料范围。模型支持搜索、收藏、最近使用和显示名；“快速／深入／批量”可保存自己的模型、助手、思考强度和工具参数。
+- Claude Code 订阅：在连接中心添加「Claude Code 订阅」，应用调用本机 `claude` CLI 的无头模式（`claude -p`），使用已登录的 claude.ai 订阅，不使用 API Key；检测到 API Key 登录会拒绝调用。每次请求单独启动进程，替换为应用自己的系统提示词，关闭全部内置工具、MCP 与用户设置，并清除继承的 `CLAUDE*`、`ANTHROPIC*` 环境变量。分支与续聊由应用重放历史完成。当前不支持课件工具和联网，CLI 不提供额度查询。仅供本人在本机使用；分发给他人时应改用各自的 API Key。
 - 仅文本模型可以处理文字任务。图像能力未知时不会自动假定支持，需确认能力或选择“仅文本”；扫描页和图表应使用图像模型。推理参数只填写服务实际支持的值：Anthropic 的常规强度使用 adaptive 模式，旧模型固定预算可填 budget:4096；Gemini 强度使用 thinkingLevel，固定预算可填 budget:4096。
 - 同一可见对话切换模型后携带本地历史与来源，并标明切换。不同服务的远端线程相互独立；分支只复制目标之前的记录。旧会话默认迁移为 Codex，迁移前保存 before-ai-v4.sqlite。
 - 内置课程讲解、推导核查、跨资料研究和复习出题助手，可修改方法、风格、默认模型、范围及工具权限，也可新建助手。学习偏好、术语和目标只在主动保存后进入学习背景，可编辑或删除。
@@ -136,6 +137,7 @@ Codex 的令牌与线程继续保存在其托管目录（由 `CODEX_HOME` 或本
 | --- | --- |
 | `npm run verify:ai` | 检查 Codex 文字、图像和线程恢复，会使用真实订阅额度 |
 | `npx tsx scripts/verify-policy.ts` | 检查关闭工具时的资料指令注入防护，会使用真实订阅额度 |
+| `npx tsx scripts/verify-claude-code.ts` | 检查 Claude Code 订阅的登录、流式文字、系统提示词、图像、多轮历史和停止，会使用少量订阅额度（默认 haiku） |
 | `npx tsx scripts/verify-pointer-ephemeral.ts` | 检查临时线程关闭后无法恢复，需要本机 Codex，不发起模型推理 |
 | `node scripts/verify-mind-map-browser.mjs` | 使用模拟接口检查导图交互与导出；需先构建，并安装 Chrome、Edge 或设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` |
 
