@@ -53,6 +53,7 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
   const building = !!active;
   const currentId = course.selectedDocumentIds.includes(r.docId) ? r.docId : course.selectedDocumentIds[0];
   const targets = scope === "all" ? course.selectedDocumentIds : scope === "selected" ? selected.filter(id => course.selectedDocumentIds.includes(id)) : currentId ? [currentId] : [];
+  const allSelected = course.selectedDocumentIds.length > 0 && course.selectedDocumentIds.every(id => selected.includes(id));
   const targetPages = targets.reduce((n, id) => n + (r.documents.find(d => d.id === id)?.pages || 0), 0);
   const results = chapterResults(revisions, course.documentIds);
   const resultTime = (id: string) => { const x = results.get(id); return x ? x.chapter.updatedAt || x.revision.createdAt : ""; };
@@ -78,7 +79,8 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
     {resumeDoc && <section className="continue-reading"><div><span>上次读到</span><h2>{chapterName(course, resumeDoc)}</h2><p>第 {course.readingPosition?.documentId === resumeDoc.id ? course.readingPosition.page : resumeDoc.page} 页 / 共 {resumeDoc.pages} 页</p></div><button className="primary" onClick={() => r.navigateSource(course.readingPosition?.documentId === resumeDoc.id ? course.readingPosition.page : resumeDoc.page, resumeDoc.id)}>继续阅读 <Icon name="right" size={16} /></button></section>}
     <section className="chapter-task-controls" aria-label="章节整理">
       <div className="chapter-task-top"><div><h2>连续阅读课件</h2><p>先建立课程框架，再逐章阅读图文；每批保存进度，随时暂停。</p></div><div className="page-actions">
-        <select aria-label="整理范围" value={scope} disabled={building} onChange={e => setScope(e.target.value)}><option value="current">当前章节</option><option value="selected">所选章节</option><option value="all">全部问答来源</option></select>
+        <select aria-label="整理范围" value={scope} disabled={building} onChange={e => setScope(e.target.value)}><option value="current">当前章节</option><option value="selected">所选章节</option><option value="all">全部章节</option></select>
+        {scope === "selected" && <button disabled={building || !course.selectedDocumentIds.length} onClick={() => setSelected(allSelected ? [] : [...course.selectedDocumentIds])}>{allSelected ? "全不选" : "全选"}</button>}
         <details className="popover"><summary aria-label="整理设置"><Icon name="settings" size={18} /></summary><div className="popover-panel overview-settings">
           <ProfileButtons ai={r.ai} onChange={value => !building && setSettings(value)} /><label>模型<ModelSelect models={r.models} value={settings} ai={r.ai} onChange={value => !building && setSettings({ ...settings, ...value })} /></label>
           <label>思考强度<select aria-label="整理思考强度" value={settings.reasoningEffort || defaultEffort(model)} disabled={building} onChange={e => setSettings({ ...settings, reasoningEffort: e.target.value })}>{!settings.reasoningEffort && !defaultEffort(model) && <option value="">模型默认</option>}{modelEfforts(model).map(e => <option key={e}>{e}</option>)}</select></label>
