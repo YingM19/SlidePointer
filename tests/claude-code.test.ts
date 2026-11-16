@@ -264,3 +264,24 @@ test("an interrupted reading request is found in the session file, then the file
     assert.equal(claudeSessionFile(id, { CLAUDE_CONFIG_DIR: config }), undefined);
   } finally { store.close(); }
 });
+
+test("a conversation keeps its own Claude Code session and continues it; one-off tasks persist nothing", async () => {
+  const f = await workerFixture();
+  try {
+    const chat = f.runtime.worker(f.c, { ephemeral: false }, f.settings);
+    const thread = await chat.thread("sonnet", undefined, { ephemeral: false });
+    assert.match(thread, /^claude:/);
+    assert.equal(await chat.thread("sonnet", thread, { ephemeral: false }), thread, "the saved session is continued");
+    const events: any[] = [];
+    const r = await withEnv("ok", () => chat.run(thread, "第一问", [], e => events.push(e)));
+    assert.equal(r.turnId, "assistant-1"); assert.ok(events.some(e => e.turnId === "assistant-1"));
+    let got = JSON.parse(readFileSync(record, "utf8"));
+    assert.equal(got.args[got.args.indexOf("--resume") + 1], thread.slice(7));
+    const once = f.runtime.worker(f.c, { ephemeral: true }, f.settings);
+    const task = await once.thread("sonnet", undefined, { ephemeral: true });
+    assert.doesNotMatch(task, /^claude:/);
+    await withEnv("ok", () => once.run(task, "批量任务", [], () => {}));
+    got = JSON.parse(readFileSync(record, "utf8"));
+    assert.ok(got.args.includes("--no-session-persistence"));
+  } finally { f.store.db.close(); }
+});

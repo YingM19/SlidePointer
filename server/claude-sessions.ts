@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AIConnection } from "../shared/ai.ts";
 import type { Store } from "./store.ts";
 import type { RuntimeEvent } from "./ai-runtime.ts";
-import { MissingClaudeSession, claudeContent, runClaude } from "./claude-code.ts";
+import { MissingClaudeSession, claudeContent, runClaude, type ClaudeRun } from "./claude-code.ts";
 
 // Reading sessions kept by Claude Code itself, so each batch sends only its own pages, like a Codex thread.
 // Ids carry a prefix so cleanup knows these live in Claude Code's session files, not in Codex.
@@ -31,51 +31,62 @@ export function deleteClaudeSession(threadId: string, env?: NodeJS.ProcessEnv) {
 type Fork = { id: string; parent: string; at?: string };
 const text = (content: unknown) => typeof content === "string" ? content : Array.isArray(content) ? content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n") : "";
 
+export const newClaudeSession = () => PREFIX + randomUUID();
+// The fork is written on the first request; recording it keeps the parent across restarts.
+export function forkClaudeSession(store: Store, parent: string, at?: string) {
+  const id = newClaudeSession();
+  store.put<Fork>("claudeFork", { id, parent, at });
+  return id;
+}
+// Starts, continues or forks the session behind threadId. A session that never got its first
+// request is started under the same id; a fork whose parent is gone is an error, not a fresh start.
+export async function runClaudeSession(store: Store, connection: AIConnection, threadId: string, run: Omit<ClaudeRun, "session">, env?: NodeJS.ProcessEnv) {
+  const fork = store.get<Fork>("claudeFork", threadId);
+  const call = (session: ClaudeRun["session"]) => runClaude(connection, { ...run, session }, { env });
+  let result;
+  try { result = await call(fork ? { id: uuid(threadId), resume: uuid(fork.parent), at: fork.at } : { id: uuid(threadId), resume: uuid(threadId) }); }
+  catch (e) {
+    if (!(e instanceof MissingClaudeSession)) throw e;
+    if (fork) throw Error("上级会话已不在 Claude Code 中，无法继承之前的上下文；请新建会话或重新分析本章");
+    result = await call({ id: uuid(threadId) });
+  }
+  if (fork) store.remove("claudeFork", threadId);
+  return result;
+}
+// Turns in the session file, shaped like Codex thread turns so recovery code reads both alike.
+export function readClaudeSession(threadId: string, env?: NodeJS.ProcessEnv) {
+  const file = claudeSessionFile(threadId, env);
+  const turns: any[] = [];
+  for (const line of file ? readFileSync(file, "utf8").split("\n") : []) {
+    let entry: any; try { entry = JSON.parse(line); } catch { continue; }
+    const blocks = entry.message?.content;
+    if (entry.type === "user" && !(Array.isArray(blocks) && blocks.some((b: any) => b?.type === "tool_result")))
+      turns.push({ id: "", status: "failed", items: [{ type: "userMessage", text: text(blocks) }] });
+    else if (entry.type === "assistant" && turns.length) {
+      const turn = turns.at(-1);
+      turn.id = entry.uuid;
+      if (text(blocks)) { turn.status = "completed"; turn.items.push({ type: "agentMessage", phase: "final_answer", text: text(blocks) }); }
+    }
+  }
+  return turns;
+}
+
 export class ClaudeSessionWorker {
   private model = "";
   constructor(private store: Store, private connection: AIConnection, private options: { effort?: string; system: string; env?: NodeJS.ProcessEnv }) {}
-  async thread(model: string, threadId?: string) { this.model = model; return threadId || PREFIX + randomUUID(); }
-  // The fork is written on the first request; recording it keeps the parent across restarts.
-  async fork(model: string, parent: string, _before?: string, at?: string) {
-    this.model = model;
-    const id = PREFIX + randomUUID();
-    this.store.put<Fork>("claudeFork", { id, parent, at });
-    return id;
-  }
+  async thread(model: string, threadId?: string) { this.model = model; return threadId || newClaudeSession(); }
+  async fork(model: string, parent: string, _before?: string, at?: string) { this.model = model; return forkClaudeSession(this.store, parent, at); }
   async run(threadId: string, prompt: string, images: string[], onEvent: RuntimeEvent, signal = new AbortController().signal, options: { effort?: string } = {}) {
     const pictures = images.map(f => `data:image/png;base64,${readFileSync(f).toString("base64")}`);
     const content = claudeContent({ messages: [{ role: "user", text: prompt, images: pictures }] });
-    const fork = this.store.get<Fork>("claudeFork", threadId);
-    const call = (session: { id: string; resume?: string; at?: string }) => runClaude(this.connection, { model: this.model, system: this.options.system, content, effort: options.effort ?? this.options.effort, signal, session }, { env: this.options.env });
-    let result;
-    try { result = await call(fork ? { id: uuid(threadId), resume: uuid(fork.parent), at: fork.at } : { id: uuid(threadId), resume: uuid(threadId) }); }
-    catch (e) {
-      if (!(e instanceof MissingClaudeSession)) throw e;
-      // The parent of a fork is gone: say so rather than silently reading without it.
-      if (fork) throw Error("上级阅读会话已不在 Claude Code 中，请重新分析本章");
-      result = await call({ id: uuid(threadId) });
-    }
-    if (fork) this.store.remove("claudeFork", threadId);
+    const result = await runClaudeSession(this.store, this.connection, threadId, { model: this.model, system: this.options.system, content, effort: options.effort ?? this.options.effort, signal }, this.options.env);
     onEvent({ turnId: result.turnId, tokenUsage: result.usage } as any);
     return { status: "completed", text: result.text, turnId: result.turnId };
   }
   // Answers the one question the reading runtime asks after an interruption: did that request finish?
   async rpc(method: string, params: { threadId: string }) {
     if (method !== "thread/read") throw Error(`Claude Code 会话不支持 ${method}`);
-    const file = claudeSessionFile(params.threadId, this.options.env);
-    const turns: any[] = [];
-    for (const line of file ? readFileSync(file, "utf8").split("\n") : []) {
-      let entry: any; try { entry = JSON.parse(line); } catch { continue; }
-      const blocks = entry.message?.content;
-      if (entry.type === "user" && !(Array.isArray(blocks) && blocks.some((b: any) => b?.type === "tool_result")))
-        turns.push({ id: "", status: "failed", items: [{ type: "userMessage", text: text(blocks) }] });
-      else if (entry.type === "assistant" && turns.length && text(blocks)) {
-        const turn = turns.at(-1);
-        turn.id = entry.uuid; turn.status = "completed";
-        turn.items.push({ type: "agentMessage", phase: "final_answer", text: text(blocks) });
-      }
-    }
-    return { thread: { id: params.threadId, turns } };
+    return { thread: { id: params.threadId, turns: readClaudeSession(params.threadId, this.options.env) } };
   }
   async shutdown() {}
 }

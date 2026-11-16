@@ -9,6 +9,7 @@ import type { AISettings, Turn, LearningNote, Source, ToolActivity } from "../sh
 import { serveToolBroker, toolTitles } from "./ai-tool-broker.ts";
 import { claudeContent, runClaude, type ClaudeToolEvent } from "./claude-code.ts";
 import { readerToolNames } from "./reader-tools.ts";
+import { isClaudeSession, newClaudeSession, runClaudeSession } from "./claude-sessions.ts";
 import { fileURLToPath } from "node:url";
 
 export type AIWorker = Pick<Codex, "thread" | "run" | "shutdown">;
@@ -62,9 +63,13 @@ function toolDetail(name: string, input: Record<string, unknown>) {
 // Claude Code runs the tool loop itself; the app only lends it MCP servers and audits each call.
 class ClaudeCodeWorker implements AIWorker {
   constructor(private config: AIConfig, private connection: AIConnection, private options: AIOptions, private settings: AISettings, private broker?: ToolBroker) {}
-  async thread(model: string, _threadId?: string, options: AIOptions = {}) { this.settings.model = model; this.options = { ...this.options, ...options }; return `claude-${randomUUID()}`; }
+  // Conversations keep a Claude Code session like a Codex thread; one-off tasks leave nothing behind.
+  async thread(model: string, threadId?: string, options: AIOptions = {}) {
+    this.settings.model = model; this.options = { ...this.options, ...options };
+    return this.options.ephemeral === false ? threadId && isClaudeSession(threadId) ? threadId : newClaudeSession() : `claude-${randomUUID()}`;
+  }
   async shutdown() {}
-  async run(_threadId: string, text: string, images: string[], onEvent: RuntimeEvent, signal = new AbortController().signal, options: AIOptions & { model?: string } = {}) {
+  async run(threadId: string, text: string, images: string[], onEvent: RuntimeEvent, signal = new AbortController().signal, options: AIOptions & { model?: string } = {}) {
     const opts = { ...this.options, ...options }, model = opts.model || this.settings.model!;
     const assistant = this.settings.assistantSnapshot || this.config.assistant(this.settings.assistantId);
     const toolsAllowed = this.connection.models.find(m => m.model === model)?.capabilities?.tools === true;
@@ -91,10 +96,12 @@ class ClaudeCodeWorker implements AIWorker {
         try { for (const s of JSON.parse(e.text).sources || []) if (documents.has(s.documentId) && typeof s.id === "string" && Number.isInteger(s.page) && typeof s.text === "string") sources.push(s); } catch { /* Non-JSON results carry no sources. */ }
         onEvent({ activity: { ...call.activity, state: e.isError ? "failed" : "completed", detail: e.isError ? e.text.slice(0, 200) || "工具失败" : sources.length ? `返回 ${sources.length} 处来源` : call.activity.detail || "已完成", durationMs: Date.now() - call.at }, ...(sources.length ? { sources } : {}) });
       };
-      const r = await runClaude(this.connection, { model, effort: opts.effort, signal: controller.signal, content: claudeContent({ messages: [{ role: "user", text, images: pictures }] }), mcp, onTool, onText: value => onEvent({ text: value }),
-        system: `${instructions}\n助手要求：${assistant.prompt}\n表达偏好：${assistant.style}\n只能使用本轮提供的工具。没有网络工具时不能声称已经搜索。` });
-      onEvent({ tokenUsage: r.usage });
-      return { text: r.text, status: "completed", turnId: "" };
+      const run = { model, effort: opts.effort, signal: controller.signal, content: claudeContent({ messages: [{ role: "user" as const, text, images: pictures }] }), mcp, onTool, onText: (value: string) => onEvent({ text: value }),
+        system: `${instructions}\n助手要求：${assistant.prompt}\n表达偏好：${assistant.style}\n只能使用本轮提供的工具。没有网络工具时不能声称已经搜索。` };
+      const native = isClaudeSession(threadId);
+      const r = native ? await runClaudeSession(this.config.store, this.connection, threadId, run) : await runClaude(this.connection, run);
+      onEvent({ tokenUsage: r.usage, ...(native ? { turnId: r.turnId } : {}) });
+      return { text: r.text, status: "completed", turnId: native ? r.turnId : "" };
     } finally { signal.removeEventListener("abort", stop); controller.abort(); await proxy?.close(); }
   }
 }

@@ -1,3 +1,4 @@
+import { isClaudeSession } from "./claude-sessions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeStates,
@@ -249,7 +250,7 @@ export class ChatService {
       const previous = [...prefix].reverse().find((t) => t.threadTurnId);
       let threadId: string | undefined;
       let seedContextId = previous ? parent.seedContextId : undefined;
-      const portable = !!previous?.runtimeThreadId && previous.runtimeThreadId !== parent.threadId || !!previous?.model && previous.model !== parent.model || (parent.connectionId && parent.connectionId !== "codex") || !!options?.connectionId && options.connectionId !== (parent.connectionId || "codex") || new Set(prefix.map(t => `${t.connectionId || "codex"}::${t.model || ""}`)).size > 1;
+      const portable = !!previous?.runtimeThreadId && previous.runtimeThreadId !== parent.threadId || !!previous?.model && previous.model !== parent.model || (parent.connectionId && parent.connectionId !== "codex" && !isClaudeSession(parent.threadId || "")) || !!options?.connectionId && options.connectionId !== (parent.connectionId || "codex") || new Set(prefix.map(t => `${t.connectionId || "codex"}::${t.model || ""}`)).size > 1;
       if (portable) {
         // Local prefix copies below are the exact branch boundary across providers.
         seedContextId = parent.seedContextId;

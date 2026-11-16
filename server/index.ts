@@ -29,6 +29,7 @@ import { ReadingService, contextText, relatedTurns } from "./reading.ts";
 import { KnowledgeService } from "./knowledge.ts";
 import { PersistentKnowledgeRuntime } from "./knowledge-runtime.ts";
 import { readingBackground, readingHistory } from "./knowledge-sessions.ts";
+import { forkClaudeSession, isClaudeSession, readClaudeSession } from "./claude-sessions.ts";
 import { MindMapService } from "./mind-maps.ts";
 import { knowledgeText } from "./learning-context.ts";
 import { Lifecycle } from "./lifecycle.ts";
@@ -188,7 +189,13 @@ function update(t: Turn) {
     events.emit(t.conversationId);
   }
 }
-const chat = new ChatService(store, ai, update, execute);
+// Branches and recovery reach a conversation's model-side history wherever it lives.
+const chatThreads = {
+  thread: (...args: Parameters<Codex["thread"]>) => ai.thread(...args),
+  fork: async (...[model, threadId, before, previous]: Parameters<Codex["fork"]>) => isClaudeSession(threadId) ? forkClaudeSession(store, threadId, previous) : ai.fork(model, threadId, before, previous),
+  readTurn: async (threadId: string, turnId: string) => isClaudeSession(threadId) ? readClaudeSession(threadId).find(t => t.id === turnId) : ai.readTurn(threadId, turnId),
+};
+const chat = new ChatService(store, chatThreads, update, execute);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { files: 1 },
@@ -774,7 +781,9 @@ async function execute(t: Turn, reuse = false) {
     c.connectionId = resolved.connection.id;
     // A fresh remote thread receives portable local history after a model switch.
     // Remote threads from other providers are never resumed with this provider.
-    if (t.switchedModel || resolved.connection.protocol !== "codex") c.threadId = undefined;
+    // Codex threads and Claude Code sessions keep the conversation on their side; other services get it replayed.
+    const nativeThread = resolved.connection.protocol === "codex" || resolved.connection.protocol === "claude-code";
+    if (t.switchedModel || !nativeThread) c.threadId = undefined;
     c.model = selected.model;
     t.model = selected.model;
     t.reasoningEffort = effort;
@@ -806,30 +815,35 @@ async function execute(t: Turn, reuse = false) {
       const inherited = session?.forkFrom;
       const forkSource = inherited?.connectionId === resolved.connection.id ? inherited : seed;
       if (!c.threadId && seed) seed.mode = "context";
-      if (!c.threadId && forkSource && resolved.connection.protocol === "codex" && forkSource.threadId && forkSource.turnId && forkSource.connectionId === resolved.connection.id && !t.switchedModel) {
-        const forker = new Codex(dir, { executable: resolved.connection.codexPath });
-        try { c.threadId = await forker.fork(selected.model, forkSource.threadId, undefined, forkSource.turnId); if (seed) seed.mode = "fork"; }
-        finally { await forker.shutdown(); }
-        lifecycle.own(c.threadId, c.id);
+      if (!c.threadId && forkSource && nativeThread && forkSource.threadId && forkSource.turnId && forkSource.connectionId === resolved.connection.id && !t.switchedModel) {
+        if (resolved.connection.protocol === "claude-code") {
+          // The Claude Code fork is written with this conversation's first request.
+          if (isClaudeSession(forkSource.threadId)) { c.threadId = forkClaudeSession(store, forkSource.threadId, forkSource.turnId); if (seed) seed.mode = "fork"; }
+        } else {
+          const forker = new Codex(dir, { executable: resolved.connection.codexPath });
+          try { c.threadId = await forker.fork(selected.model, forkSource.threadId, undefined, forkSource.turnId); if (seed) seed.mode = "fork"; }
+          finally { await forker.shutdown(); }
+        }
+        if (c.threadId) lifecycle.own(c.threadId, c.id);
       }
-      if (seed && (!seed.threadId || seed.connectionId !== resolved.connection.id || resolved.connection.protocol !== "codex")) seed.mode = "context";
+      if (seed && (!seed.threadId || seed.connectionId !== resolved.connection.id || !nativeThread)) seed.mode = "context";
       c.threadId = await worker.thread(c.model, c.threadId, options);
-      t.runtimeThreadId = resolved.connection.protocol === "codex" ? c.threadId : undefined;
+      t.runtimeThreadId = nativeThread ? c.threadId : undefined;
       c.resumeError = undefined;
       if (session) {
-        if (resolved.connection.protocol === "codex") lifecycle.own(c.threadId, session.id);
+        if (nativeThread) lifecycle.own(c.threadId, session.id);
         const latest = store.get<import("../shared/types.ts").ReadingSession>("reading", session.id);
-        if (latest) store.put("reading", { ...latest, threadId: resolved.connection.protocol === "codex" ? c.threadId : undefined, connectionId: c.connectionId, model: c.model, readingSeed: seed });
+        if (latest) store.put("reading", { ...latest, threadId: nativeThread ? c.threadId : undefined, connectionId: c.connectionId, model: c.model, readingSeed: seed });
       }
       if (!session) {
-        if (resolved.connection.protocol === "codex") lifecycle.own(c.threadId, c.id);
+        if (nativeThread) lifecycle.own(c.threadId, c.id);
         stopped();
         store.put("conversation", {
           ...mustConv(c.id),
           model: c.model,
           connectionId: c.connectionId,
-          threadId: resolved.connection.protocol === "codex" ? c.threadId : undefined,
-          runtimeBindings: resolved.connection.protocol === "codex" ? { ...c.runtimeBindings, [`${c.connectionId}::${c.model}`]: { threadId: c.threadId, model: c.model } } : c.runtimeBindings,
+          threadId: nativeThread ? c.threadId : undefined,
+          runtimeBindings: nativeThread ? { ...c.runtimeBindings, [`${c.connectionId}::${c.model}`]: { threadId: c.threadId, model: c.model } } : c.runtimeBindings,
           resumeError: undefined,
           readingSeed: seed,
         });
@@ -869,7 +883,7 @@ async function execute(t: Turn, reuse = false) {
         )
       : [];
     const knowledgeSnapshot = s.knowledgeSnapshot || frozen?.knowledgeSnapshot;
-    const overview = seed ? resolved.connection.protocol === "codex" && seed.mode === "fork" && !t.switchedModel ? `已从《${seed.title}》的固定阅读检查点继承上下文，覆盖${seed.completed}/${seed.total}页。未读内容不能当作已读。` : readingBackground(store, seed) : knowledgeText(knowledgeSnapshot);
+    const overview = seed ? nativeThread && seed.mode === "fork" && !t.switchedModel ? `已从《${seed.title}》的固定阅读检查点继承上下文，覆盖${seed.completed}/${seed.total}页。未读内容不能当作已读。` : readingBackground(store, seed) : knowledgeText(knowledgeSnapshot);
     const notes = (s.noteSnapshot || frozen?.notes || [])
           .filter((n) =>
             n.sources.every((src) =>
