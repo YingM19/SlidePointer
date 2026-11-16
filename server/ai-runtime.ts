@@ -5,8 +5,11 @@ import { AIConfig } from "./ai-config.ts";
 import { ReadTools, toolSpecs } from "./reader-tools.ts";
 import { invokeProvider, type FunctionTool } from "./ai-provider.ts";
 import type { AIConnection, ResearchMessage, AIContext } from "../shared/ai.ts";
-import type { AISettings, Turn, LearningNote, Source } from "../shared/types.ts";
+import type { AISettings, Turn, LearningNote, Source, ToolActivity } from "../shared/types.ts";
 import { serveToolBroker, toolTitles } from "./ai-tool-broker.ts";
+import { claudeContent, runClaude, type ClaudeToolEvent } from "./claude-code.ts";
+import { readerToolNames } from "./reader-tools.ts";
+import { fileURLToPath } from "node:url";
 
 export type AIWorker = Pick<Codex, "thread" | "run" | "shutdown">;
 export type RuntimeEvent = Parameters<Codex["run"]>[3];
@@ -18,6 +21,7 @@ export interface ToolBroker {
 export class AIRuntime {
   constructor(readonly config: AIConfig) {}
   worker(connection: AIConnection, options: AIOptions, settings: AISettings, broker?: ToolBroker): AIWorker {
+    if (connection.protocol === "claude-code") return new ClaudeCodeWorker(this.config, connection, options, settings, broker);
     return connection.protocol === "codex" ? broker ? new BrokerCodex(this.config.store.dir, { ...options, executable: connection.codexPath }, broker) : new Codex(this.config.store.dir, { ...options, executable: connection.codexPath }) : new NativeWorker(this.config, connection, settings, broker);
   }
   context(documentIds: string[], courseId?: string, history: Turn[] = [], scope?: { documentId: string; page: number; scope: string }): AIContext {
@@ -44,6 +48,55 @@ class BrokerCodex implements AIWorker {
     finally { signal?.removeEventListener("abort", abort); }
   }
   async shutdown() { this.controller.abort(); await this.worker?.shutdown(); await this.proxy?.close(); }
+}
+const toolLabels: Record<string, string> = { ...toolTitles, read_pages: "读取课件页面" };
+function toolKind(name: string): ToolActivity["kind"] {
+  return name.includes("artifact") ? "artifact" : name.includes("note") ? "notes" : name.includes("web") ? "web" : name.startsWith("external_") ? "external" : "course";
+}
+function toolDetail(name: string, input: Record<string, unknown>) {
+  if (name === "search_course" || name === "search_notes" || name === "search_web") return String(input.query || "").slice(0, 200);
+  if (name === "read_pages") return `第 ${(Array.isArray(input.pages) ? input.pages : []).join("、")} 页`;
+  if (name === "read_web") return String(input.url || "").slice(0, 200);
+  return "";
+}
+// Claude Code runs the tool loop itself; the app only lends it MCP servers and audits each call.
+class ClaudeCodeWorker implements AIWorker {
+  constructor(private config: AIConfig, private connection: AIConnection, private options: AIOptions, private settings: AISettings, private broker?: ToolBroker) {}
+  async thread(model: string, _threadId?: string, options: AIOptions = {}) { this.settings.model = model; this.options = { ...this.options, ...options }; return `claude-${randomUUID()}`; }
+  async shutdown() {}
+  async run(_threadId: string, text: string, images: string[], onEvent: RuntimeEvent, signal = new AbortController().signal, options: AIOptions & { model?: string } = {}) {
+    const opts = { ...this.options, ...options }, model = opts.model || this.settings.model!;
+    const assistant = this.settings.assistantSnapshot || this.config.assistant(this.settings.assistantId);
+    const toolsAllowed = this.connection.models.find(m => m.model === model)?.capabilities?.tools === true;
+    const controller = new AbortController(), stop = () => controller.abort();
+    signal.addEventListener("abort", stop, { once: true });
+    let proxy: Awaited<ReturnType<typeof serveToolBroker>> | undefined, mcp: { servers: Record<string, unknown>; tools: Record<string, string[]> } | undefined;
+    const documents = new Set([opts.reader?.documentId, ...(opts.reader?.documentIds || [])].filter(Boolean));
+    const started = new Map<string, { name: string; at: number; activity: ToolActivity }>();
+    try {
+      if (toolsAllowed && this.broker?.specs.length) {
+        proxy = await serveToolBroker(this.broker, controller.signal);
+        mcp = { servers: { lecture_workspace: { type: "http", url: proxy.url, headers: { Authorization: `Bearer ${proxy.token}` } } }, tools: { lecture_workspace: proxy.names } };
+      } else if (toolsAllowed && opts.agentTools && opts.reader && assistant.tools.includes("course")) {
+        mcp = { servers: { lecture_reader: { type: "stdio", command: process.execPath, args: ["--import", new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url).href, fileURLToPath(new URL("./reader-tools.ts", import.meta.url)), this.config.store.dir, JSON.stringify({ ...opts.reader, textOnly: this.settings.textOnly })], env: { LECTURE_TOOL_REQUEST: opts.requestId || "" } } }, tools: { lecture_reader: [...readerToolNames] } };
+      }
+      const pictures = this.settings.textOnly ? [] : await Promise.all(images.map(async f => `data:image/png;base64,${(await readFile(f)).toString("base64")}`));
+      const onTool = (e: ClaudeToolEvent) => {
+        if (e.type === "call") {
+          const activity: ToolActivity = { id: e.id, kind: toolKind(e.name), title: this.broker?.label?.(e.name) || toolLabels[e.name] || e.name, detail: toolDetail(e.name, e.input), state: "running" };
+          started.set(e.id, { name: e.name, at: Date.now(), activity }); onEvent({ activity }); return;
+        }
+        const call = started.get(e.id); if (!call) return;
+        const sources: Source[] = [];
+        try { for (const s of JSON.parse(e.text).sources || []) if (documents.has(s.documentId) && typeof s.id === "string" && Number.isInteger(s.page) && typeof s.text === "string") sources.push(s); } catch { /* Non-JSON results carry no sources. */ }
+        onEvent({ activity: { ...call.activity, state: e.isError ? "failed" : "completed", detail: e.isError ? e.text.slice(0, 200) || "工具失败" : sources.length ? `返回 ${sources.length} 处来源` : call.activity.detail || "已完成", durationMs: Date.now() - call.at }, ...(sources.length ? { sources } : {}) });
+      };
+      const r = await runClaude(this.connection, { model, effort: opts.effort, signal: controller.signal, content: claudeContent({ messages: [{ role: "user", text, images: pictures }] }), mcp, onTool, onText: value => onEvent({ text: value }),
+        system: `${instructions}\n助手要求：${assistant.prompt}\n表达偏好：${assistant.style}\n只能使用本轮提供的工具。没有网络工具时不能声称已经搜索。` });
+      onEvent({ tokenUsage: r.usage });
+      return { text: r.text, status: "completed", turnId: "" };
+    } finally { signal.removeEventListener("abort", stop); controller.abort(); await proxy?.close(); }
+  }
 }
 class NativeWorker implements AIWorker {
   constructor(private config: AIConfig, private connection: AIConnection, private settings: AISettings, private broker?: ToolBroker) {}

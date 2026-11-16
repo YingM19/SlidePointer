@@ -16,13 +16,31 @@ process.stdin.on("data", d => input += d);
 process.stdin.on("end", () => {
   const args = process.argv.slice(2);
   const promptFile = args[args.indexOf("--system-prompt-file") + 1];
-  writeFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, cwd: process.cwd(), input: JSON.parse(input), system: readFileSync(promptFile, "utf8"),
+  const mcpFile = args.includes("--mcp-config") ? args[args.indexOf("--mcp-config") + 1] : "";
+  const mcp = mcpFile ? JSON.parse(readFileSync(mcpFile, "utf8")).mcpServers : null;
+  writeFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, cwd: process.cwd(), input: JSON.parse(input), system: readFileSync(promptFile, "utf8"), mcp,
     env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(CLAUDE|ANTHROPIC)/i.test(k))) }));
   const out = e => process.stdout.write(JSON.stringify(e) + "\\n");
-  out({ type: "system", subtype: "init", apiKeySource: mode === "apikey" ? "ANTHROPIC_API_KEY" : "none", tools: [] });
+  out({ type: "system", subtype: "init", apiKeySource: mode === "apikey" ? "ANTHROPIC_API_KEY" : "none", tools: [],
+    mcp_servers: Object.keys(mcp || {}).map(name => ({ name, status: mode === "mcpfail" ? "failed" : "connected" })) });
   if (mode === "exit") process.exit(3);
   if (mode === "limited") { out({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: "API Error: 429 rate limit" }); return; }
   const delta = d => out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: d } });
+  if (mode === "mcpfail") { setTimeout(() => {}, 30000); return; }
+  if (mode === "rogue") { out({ type: "assistant", message: { content: [{ type: "tool_use", id: "r1", name: "Bash", input: { command: "dir" } }] } }); setTimeout(() => {}, 30000); return; }
+  if (mode === "tools") {
+    // Call the app's tool channel the way the real CLI would, with the configured bearer token.
+    const server = mcp.lecture_workspace;
+    fetch(server.url, { method: "POST", headers: { ...server.headers, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "read_pages", arguments: { pages: [2] } } }) })
+      .then(r => r.json()).then(reply => {
+        out({ type: "assistant", message: { content: [{ type: "thinking", thinking: "" }, { type: "tool_use", id: "tu1", name: "mcp__lecture_workspace__read_pages", input: { pages: [2] } }] } });
+        out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: reply.result.content }] } });
+        delta({ type: "text_delta", text: "第 2 页讲导数" });
+        out({ type: "result", subtype: "success", is_error: false, result: "第 2 页讲导数", usage: { input_tokens: 1, output_tokens: 1 },
+          modelUsage: { a: { inputTokens: 10, cacheReadInputTokens: 30, cacheCreationInputTokens: 60, outputTokens: 20 }, b: { inputTokens: 5, outputTokens: 5 } } });
+      });
+    return;
+  }
   delta({ type: "thinking_delta", thinking: "secret reasoning" });
   delta({ type: "text_delta", text: "你好" });
   if (mode === "slow") { setTimeout(() => delta({ type: "text_delta", text: "，太慢" }), 30000); return; }
@@ -87,7 +105,7 @@ test("reports failures in Chinese without retrying", async () => {
   await assert.rejects(invokeClaudeCode(connection, request(), { env: env("apikey") }), /API Key 登录/);
   await assert.rejects(invokeClaudeCode(connection, request(), { env: env("exit") }), /退出代码 3/);
   await assert.rejects(invokeClaudeCode(connection, request({ effort: "budget:4096" }), { env: env() }), /不支持此思考强度/);
-  await assert.rejects(invokeClaudeCode(connection, request({ tools: [{ name: "x", description: "", inputSchema: {} }] }), { env: env() }), /暂不支持应用内工具/);
+  await assert.rejects(invokeClaudeCode(connection, request({ tools: [{ name: "x", description: "", inputSchema: {} }] }), { env: env() }), /工具由 CLI 执行/);
   await assert.rejects(invokeClaudeCode({ ...connection, claudePath: path.join(dir, "missing.exe") }, request(), { env: env() }), /找不到 Claude Code CLI/);
 });
 
@@ -129,4 +147,74 @@ test("unwraps the npm claude.cmd shim to the native executable", () => {
 
 test("environment cleanup removes every parent Claude and Anthropic variable", () => {
   assert.deepEqual(claudeEnv({ PATH: "p", ANTHROPIC_AUTH_TOKEN: "t", anthropic_api_key: "k", CLAUDE_CODE_ENTRYPOINT: "x", CLAUDE_CONFIG_DIR: "c" }), { PATH: "p", CLAUDE_CONFIG_DIR: "c" });
+});
+
+// Tool rounds run inside the CLI; the worker lends it the app's MCP channel and audits every call.
+const doc = "d".repeat(64);
+async function workerFixture() {
+  const { AIConfig } = await import("../server/ai-config.ts");
+  const { AIRuntime } = await import("../server/ai-runtime.ts");
+  const { Store } = await import("../server/store.ts");
+  const { claudeModels } = await import("../server/claude-code.ts");
+  const store = new Store(path.join(dir, `store-${Math.random().toString(36).slice(2)}`));
+  const config = new AIConfig(store, { models: async () => [] } as any, () => {});
+  const c: AIConnection = { ...connection, models: claudeModels() };
+  const settings = { connectionId: c.id, model: "sonnet", assistantSnapshot: config.assistant("explain") };
+  return { runtime: new AIRuntime(config), c, settings, store };
+}
+async function withEnv<T>(mode: string, fn: () => Promise<T>) {
+  const saved = { mode: process.env.FAKE_MODE, record: process.env.FAKE_RECORD };
+  process.env.FAKE_MODE = mode; process.env.FAKE_RECORD = record;
+  try { return await fn(); }
+  finally { for (const [k, v] of [["FAKE_MODE", saved.mode], ["FAKE_RECORD", saved.record]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+}
+const reader = { documentId: doc, page: 1, scope: "page" as const, extraPages: [] };
+
+test("worker lends the broker over authenticated MCP and reports tool steps and sources", async () => {
+  const f = await workerFixture();
+  const calls: unknown[] = [];
+  const broker = { specs: [{ name: "read_pages", description: "读页", inputSchema: { type: "object" } }], label: () => "读取课件页面",
+    call: async (name: string, args: Record<string, unknown>) => { calls.push([name, args]); return { text: JSON.stringify({ sources: [{ id: "s1", documentId: doc, page: 2, text: "导数" }, { id: "s2", documentId: "e".repeat(64), page: 1, text: "别的课件" }] }) }; } };
+  const events: any[] = [];
+  const worker = f.runtime.worker(f.c, { agentTools: true, reader }, f.settings, broker);
+  const thread = await worker.thread("sonnet");
+  const result = await withEnv("tools", () => worker.run(thread, "第二页讲什么", [], e => events.push(e)));
+  assert.equal(result.text, "第 2 页讲导数");
+  assert.deepEqual(calls, [["read_pages", { pages: [2] }]]);
+  const steps = events.filter(e => e.activity).map(e => [e.activity.title, e.activity.state, e.activity.detail]);
+  assert.deepEqual(steps, [["读取课件页面", "running", "第 2 页"], ["读取课件页面", "completed", "返回 1 处来源"]]);
+  assert.deepEqual(events.find(e => e.sources).sources.map((s: any) => s.id), ["s1"], "sources outside the frozen documents are dropped");
+  assert.deepEqual(events.find(e => e.tokenUsage).tokenUsage, { input: 105, output: 25, total: 130 });
+  const got = JSON.parse(readFileSync(record, "utf8"));
+  assert.deepEqual(got.args.slice(got.args.indexOf("--allowedTools") + 1), ["mcp__lecture_workspace__read_pages"]);
+  assert.equal(got.mcp.lecture_workspace.type, "http");
+  assert.match(got.mcp.lecture_workspace.headers.Authorization, /^Bearer [0-9a-f]{64}$/);
+  assert.match(got.system, /只能使用本轮提供的工具/);
+  assert.deepEqual(readdirSync(path.join(dir, "workspace")), [], "prompt and MCP files are removed");
+  f.store.db.close();
+});
+
+test("worker without a broker starts the read-only course reader only when allowed", async () => {
+  const f = await workerFixture();
+  await withEnv("ok", () => f.runtime.worker(f.c, { agentTools: true, reader, requestId: "q1" }, f.settings).run("t", "问题", [], () => {}));
+  let got = JSON.parse(readFileSync(record, "utf8"));
+  assert.equal(got.mcp.lecture_reader.command, process.execPath);
+  assert.deepEqual(JSON.parse(got.mcp.lecture_reader.args.at(-1)).documentId, doc);
+  assert.equal(got.mcp.lecture_reader.env.LECTURE_TOOL_REQUEST, "q1");
+  assert.ok(got.args.includes("mcp__lecture_reader__read_pages"));
+  await withEnv("ok", () => f.runtime.worker(f.c, { agentTools: false, reader }, f.settings).run("t", "问题", [], () => {}));
+  got = JSON.parse(readFileSync(record, "utf8"));
+  assert.equal(got.mcp, null);
+  assert.ok(!got.args.includes("--allowedTools"));
+  const custom = { ...f.c, models: [...f.c.models, { model: "my-model", displayName: "my-model", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [], custom: true, capabilities: { vision: true, tools: "unknown" as const, reasoning: false } }] };
+  await withEnv("ok", () => f.runtime.worker(custom, { agentTools: true, reader }, { ...f.settings, model: "my-model" }).run("t", "问题", [], () => {}));
+  assert.equal(JSON.parse(readFileSync(record, "utf8")).mcp, null, "unconfirmed tool support gets no tools");
+  f.store.db.close();
+});
+
+test("worker stops on unauthorized tools and on a tool channel that fails to start", async () => {
+  const f = await workerFixture();
+  await assert.rejects(withEnv("rogue", () => f.runtime.worker(f.c, { agentTools: true, reader }, f.settings).run("t", "问题", [], () => {})), /未授权的工具/);
+  await assert.rejects(withEnv("mcpfail", () => f.runtime.worker(f.c, { agentTools: true, reader }, f.settings).run("t", "问题", [], () => {})), /工具通道未能启动/);
+  f.store.db.close();
 });

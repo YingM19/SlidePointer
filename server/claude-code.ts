@@ -17,7 +17,7 @@ export function claudeModels(): AIModel[] {
     ["sonnet", "Claude Sonnet（最新）", true],
     ["opus", "Claude Opus（最新）", false],
     ["haiku", "Claude Haiku（最新）", false],
-  ].map(([model, displayName, isDefault]) => ({ model: model as string, displayName: displayName as string, isDefault: isDefault as boolean, inputModalities: ["text", "image"], defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts, capabilities: { vision: true, tools: false, reasoning: true } }));
+  ].map(([model, displayName, isDefault]) => ({ model: model as string, displayName: displayName as string, isDefault: isDefault as boolean, inputModalities: ["text", "image"], defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts, capabilities: { vision: true, tools: true, reasoning: true } }));
 }
 
 let workspace = path.join(os.tmpdir(), "slidepointer-claude");
@@ -102,46 +102,76 @@ function failure(result: any, stderr: string) {
   return "Claude Code 未能完成回答，请检查连接状态后重试";
 }
 
-export async function invokeClaudeCode(connection: AIConnection, req: ProviderRequest, options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}): Promise<ProviderResult> {
+export type ClaudeToolEvent =
+  | { type: "call"; id: string; server: string; name: string; input: Record<string, unknown> }
+  | { type: "result"; id: string; isError: boolean; text: string };
+export interface ClaudeRun {
+  model: string; system: string; content: unknown[]; effort?: string; signal: AbortSignal;
+  onText?: (text: string) => void;
+  // Servers the CLI may start, and the only tools it may call (server -> tool names).
+  mcp?: { servers: Record<string, unknown>; tools: Record<string, string[]> };
+  onTool?: (event: ClaudeToolEvent) => void;
+  maxToolCalls?: number;
+}
+const toolText = (content: unknown) => typeof content === "string" ? content : Array.isArray(content) ? content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n") : "";
+
+export async function runClaude(connection: AIConnection, run: ClaudeRun, options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}) {
   const command = discoverClaudeCommand({ executable: connection.claudePath, env: options.env });
-  if (req.tools?.length) throw Error("Claude Code 连接暂不支持应用内工具");
-  const effort = req.effort && claudeEfforts.includes(req.effort) ? req.effort : undefined;
-  if (req.effort && !effort) throw Error("Claude Code 不支持此思考强度");
-  const content = claudeContent(req);
+  const effort = run.effort && claudeEfforts.includes(run.effort) ? run.effort : undefined;
+  if (run.effort && !effort) throw Error("Claude Code 不支持此思考强度");
   mkdirSync(workspace, { recursive: true });
-  // Long assistant prompts can exceed the Windows command-line limit.
-  const promptFile = path.join(workspace, `system-${randomUUID()}.txt`);
-  await writeFile(promptFile, req.system, "utf8");
+  // Long assistant prompts can exceed the Windows command-line limit; tool tokens stay off argv.
+  const id = randomUUID(), promptFile = path.join(workspace, `system-${id}.txt`), mcpFile = path.join(workspace, `mcp-${id}.json`);
+  await writeFile(promptFile, run.system, "utf8");
+  const allowed = new Map(Object.entries(run.mcp?.tools || {}).flatMap(([server, names]) => names.map(name => [`mcp__${server}__${name}`, { server, name }] as const)));
+  if (allowed.size) await writeFile(mcpFile, JSON.stringify({ mcpServers: run.mcp!.servers }), "utf8");
   const args = [...command.args, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence",
-    "--model", req.model, ...(effort ? ["--effort", effort] : []), "--system-prompt-file", promptFile, "--tools", "", "--strict-mcp-config", "--setting-sources", ""];
+    "--model", run.model, ...(effort ? ["--effort", effort] : []), "--system-prompt-file", promptFile, "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+    ...(allowed.size ? ["--mcp-config", mcpFile, "--allowedTools", ...allowed.keys()] : [])];
   const limit = AbortSignal.timeout(options.timeoutMs ?? 300000);
+  type Outcome = { text: string; usage: NonNullable<ProviderResult["usage"]> };
   try {
-    return await new Promise<ProviderResult>((resolve, reject) => {
+    return await new Promise<Outcome>((resolve, reject) => {
       const child = spawn(command.command, args, { cwd: workspace, env: claudeEnv(options.env), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
-      let buffer = "", stderr = "", text = "", result: any, settled = false;
-      const finish = (error?: string, value?: ProviderResult) => {
+      let buffer = "", stderr = "", text = "", result: any, settled = false, calls = 0;
+      const finish = (error?: string, value?: Outcome) => {
         if (settled) return; settled = true;
-        req.signal.removeEventListener("abort", stop); limit.removeEventListener("abort", stop);
+        run.signal.removeEventListener("abort", stop); limit.removeEventListener("abort", stop);
         if (error) reject(Error(error)); else resolve(value!);
       };
-      const stop = () => { killTree(child.pid, () => child.kill()); finish(req.signal.aborted ? "已停止" : "模型响应超时，请缩小任务后重试"); };
-      if (req.signal.aborted) return stop();
-      req.signal.addEventListener("abort", stop, { once: true }); limit.addEventListener("abort", stop, { once: true });
+      const halt = (message: string) => { killTree(child.pid, () => child.kill()); finish(message); };
+      const stop = () => halt(run.signal.aborted ? "已停止" : "模型响应超时，请缩小任务后重试");
+      if (run.signal.aborted) return stop();
+      run.signal.addEventListener("abort", stop, { once: true }); limit.addEventListener("abort", stop, { once: true });
       child.on("error", e => finish((e as NodeJS.ErrnoException).code === "ENOENT" ? "找不到 Claude Code CLI，请检查安装或连接设置中的路径" : "无法启动 Claude Code CLI"));
       child.stderr.on("data", d => { if (stderr.length < 20000) stderr += d; });
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => {
+        if (settled) return;
         buffer += chunk;
-        if (buffer.length > 8_000_000) { killTree(child.pid, () => child.kill()); return finish("Claude Code 输出过大"); }
+        if (buffer.length > 8_000_000) return halt("Claude Code 输出过大");
         let i: number;
-        while ((i = buffer.indexOf("\n")) >= 0) {
+        while (!settled && (i = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, i).trim(); buffer = buffer.slice(i + 1);
           if (!line) continue;
           let event: any; try { event = JSON.parse(line); } catch { continue; }
+          if (event.type === "system" && event.subtype === "init") {
+            // Only the subscription login is allowed; a stored API key would bill per token.
+            if (event.apiKeySource && event.apiKeySource !== "none") return halt("Claude Code 当前使用 API Key 登录；本连接只使用订阅登录，请在终端运行 claude 改用 claude.ai 账号登录");
+            const failed = (event.mcp_servers || []).filter((s: any) => s.status !== "connected");
+            if (allowed.size && failed.length) return halt("应用工具通道未能启动，请重试；仍失败时可在提问设置中关闭课件工具");
+          }
           // Thinking blocks are skipped; only answer text reaches the reader.
-          if (event.type === "stream_event" && event.event?.type === "content_block_delta" && event.event.delta?.type === "text_delta") { text += event.event.delta.text; req.onText?.(text); }
-          // Only the subscription login is allowed; a stored API key would bill per token.
-          if (event.type === "system" && event.subtype === "init" && event.apiKeySource && event.apiKeySource !== "none") { killTree(child.pid, () => child.kill()); return finish("Claude Code 当前使用 API Key 登录；本连接只使用订阅登录，请在终端运行 claude 改用 claude.ai 账号登录"); }
+          if (event.type === "stream_event" && event.event?.type === "content_block_delta" && event.event.delta?.type === "text_delta") { text += event.event.delta.text; run.onText?.(text); }
+          for (const block of event.type === "assistant" || event.type === "user" ? event.message?.content || [] : []) {
+            if (block?.type === "tool_use") {
+              const tool = allowed.get(block.name);
+              if (!tool) return halt("检测到未授权的工具，已停止 AI。");
+              if (++calls > (run.maxToolCalls ?? 16)) return halt("单轮工具调用过多，请缩小任务范围");
+              run.onTool?.({ type: "call", id: block.id, server: tool.server, name: tool.name, input: block.input || {} });
+            }
+            if (block?.type === "tool_result") run.onTool?.({ type: "result", id: block.tool_use_id, isError: !!block.is_error, text: toolText(block.content) });
+          }
           if (event.type === "result") result = event;
         }
       });
@@ -149,15 +179,23 @@ export async function invokeClaudeCode(connection: AIConnection, req: ProviderRe
         if (settled) return;
         if (!result) return finish(code === 0 ? "Claude Code 响应提前结束，回答结果未确认；请主动重试" : failure(undefined, stderr) + `（进程退出代码 ${code}）`);
         if (result.is_error || result.subtype !== "success") return finish(failure(result, stderr));
-        const answer = text || (typeof result.result === "string" ? result.result : "");
+        // modelUsage covers every model request in the turn, including tool rounds.
+        const models = Object.values(result.modelUsage || {}) as any[];
         const u = result.usage || {};
-        const input = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0), output = u.output_tokens || 0;
-        finish(undefined, { text: answer, toolCalls: [], usage: { input, output, total: input + output } });
+        const input = models.length ? models.reduce((n, m) => n + (m.inputTokens || 0) + (m.cacheReadInputTokens || 0) + (m.cacheCreationInputTokens || 0), 0) : (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+        const output = models.length ? models.reduce((n, m) => n + (m.outputTokens || 0), 0) : u.output_tokens || 0;
+        finish(undefined, { text: text || (typeof result.result === "string" ? result.result : ""), usage: { input, output, total: input + output } });
       });
       child.stdin.on("error", () => {});
-      child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n");
+      child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content: run.content } }) + "\n");
     });
-  } finally { await unlink(promptFile).catch(() => {}); }
+  } finally { await Promise.all([unlink(promptFile), unlink(mcpFile)].map(p => p.catch(() => {}))); }
+}
+
+export async function invokeClaudeCode(connection: AIConnection, req: ProviderRequest, options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}): Promise<ProviderResult> {
+  if (req.tools?.length) throw Error("Claude Code 连接的工具由 CLI 执行，不能经 API 适配器传入");
+  const r = await runClaude(connection, { model: req.model, system: req.system, content: claudeContent(req), effort: req.effort, signal: req.signal, onText: req.onText }, options);
+  return { text: r.text, toolCalls: [], usage: r.usage };
 }
 
 function run(command: ClaudeCommand, args: string[], env?: NodeJS.ProcessEnv) {

@@ -13,6 +13,12 @@ const capability = z.union([z.boolean(), z.literal("unknown")]);
 const modelSchema = z.object({ model: z.string().min(1).max(200), displayName: z.string().max(200), description: z.string().max(1000).optional(), isDefault: z.boolean().default(false), inputModalities: z.array(z.string()).optional(), defaultReasoningEffort: z.string().trim().max(30).default(""), supportedReasoningEfforts: z.array(z.object({ reasoningEffort: z.string().trim().max(30), description: z.string().max(200) })).max(20).transform(list => list.filter(e => e.reasoningEffort)).default([]), capabilities: z.object({ vision: capability, tools: capability, reasoning: capability }).optional(), contextWindow: z.number().int().positive().optional(), custom: z.boolean().optional() });
 const connectionSchema = z.object({ name: z.string().trim().min(1).max(100), protocol: z.enum(["codex", "claude-code", "openai", "compatible", "anthropic", "gemini"]), preset: z.string().max(100).optional(), baseUrl: z.string().max(2000), enabled: z.boolean(), models: z.array(modelSchema).max(2000), defaultModel: z.string().max(200).optional(), codexPath: z.string().max(2000).optional(), claudePath: z.string().max(2000).optional(), apiKey: z.string().max(8192).optional() });
 const assistantSchema = z.object({ name: z.string().trim().min(1).max(100), description: z.string().max(1000), prompt: z.string().max(20000), style: z.string().max(2000), settings: settingsSchema, scope: z.enum(["page", "nearby", "full"]), tools: z.array(z.enum(["course", "notes", "web", "artifacts"])).max(4), mcpToolIds: z.array(z.string().max(200)).max(100) });
+// Built-in Claude Code aliases follow the current catalog, so earlier saved capabilities do not linger.
+function claudeCatalog(c: AIConnection): AIConnection {
+  if (c.protocol !== "claude-code") return c;
+  const catalog = claudeModels();
+  return { ...c, models: c.models.map(m => { const known = catalog.find(x => x.model === m.model); return known ? { ...m, capabilities: known.capabilities, supportedReasoningEfforts: known.supportedReasoningEfforts } : m; }) };
+}
 export class AIConfig {
   readonly vault: SecretVault;
   constructor(readonly store: Store, readonly codex: Codex, readonly notify: () => void) {
@@ -23,7 +29,7 @@ export class AIConfig {
     if (executable) codex.useExecutable(executable);
     for (const assistant of builtinAssistants()) if (!store.get("aiAssistant", assistant.id)) store.put("aiAssistant", assistant);
   }
-  connections() { return this.store.all<AIConnection>("aiConnection").map(c => ({ ...withPresetEfforts(c), hasKey: this.vault.has(c.id) })); }
+  connections() { return this.store.all<AIConnection>("aiConnection").map(c => ({ ...withPresetEfforts(claudeCatalog(c)), hasKey: this.vault.has(c.id) })); }
   connection(id = "codex") { const c = this.connections().find(c => c.id === id); if (!c) throw Error("模型连接不存在"); return c; }
   async saveConnection(id: string | undefined, input: unknown) {
     const v = connectionSchema.parse(input), old = id ? this.connection(id) : undefined;
