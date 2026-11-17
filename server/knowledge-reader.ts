@@ -161,7 +161,12 @@ export class ContinuousKnowledgeReader {
           const currentRoot = session(r.courseSessionId!);
           const priorChapter = currentRoot.chapterResults?.find(c => c.documentId === documentId);
           const cachedSummary = r.mode !== "overview" && priorChapter?.summary === chapter.summary && priorChapter.summaryCompleted === chapter.summaryCompleted ? currentRoot.turns.findLast(t => t.key.startsWith("integrate:") && t.state === "completed")?.answer : undefined;
-          const result = cachedSummary ? { answer: cachedSummary } : await engine.read(r.courseSessionId!, { key: `integrate:${id}:${documentId}`, prompt: `更新课程成果。以下是《${doc.name}》当前章节成果，替换此前同章结论，保留其他已读章节；形成当前课程知识结构、概念联系、先修知识与学习顺序。不要把未读章节写成已读，控制在1200字内。保留引用。\n${chapter.summary}`, sources: citedSources(chapter.summary, new Map((chapter.sources || []).map(s => [s.id, s]))).map(s => ({ ...s, image: false, text: s.text.slice(0, 1000) })) }, signal);
+          // The course summary is rewritten whole each time; the prompt carries the previous version and
+          // names every chapter it must cover, so it never shrinks to the newest chapter.
+          const covered = ids.filter(d => d === documentId || currentRoot.chapterResults?.some(c => c.documentId === d)).map(d => `《${this.store.document(d)?.name || "来源已删除"}》`);
+          const previous = currentRoot.turns.findLast(t => t.key.startsWith("integrate:") && t.state === "completed")?.answer;
+          const prompt = `更新整门课程的课程汇总（不是本章摘要）。本次加入或更新《${doc.name}》的章节成果，替换此前关于该章的结论。\n输出更新后的完整课程汇总，必须覆盖以下全部已整理章节，按课程顺序：${covered.join("、")}。先概括整门课的主线，再按章节列出各章要点，最后写跨章节的概念联系、先修关系与学习顺序。未整理的章节不要写成已读。控制在${Math.min(4000, 800 + covered.length * 500)}字内，保留引用。\n${previous ? `当前课程汇总（需在此基础上更新，保留其他章节内容）：\n${previous}\n\n` : ""}《${doc.name}》章节成果：\n${chapter.summary}`;
+          const result = cachedSummary ? { answer: cachedSummary } : await engine.read(r.courseSessionId!, { key: `integrate:${id}:${documentId}`, prompt, sources: citedSources(chapter.summary, new Map((chapter.sources || []).map(s => [s.id, s]))).map(s => ({ ...s, image: false, text: s.text.slice(0, 1000) })) }, signal);
           r = get(); r.summary = result.answer; r.summaryUpdatedAt = new Date().toISOString();
           root = session(r.courseSessionId!); root.chapterResults = [...(root.chapterResults || []).filter(c => c.documentId !== documentId), structuredClone(chapter)];
           root.checkpoint!.completed = root.chapterResults.reduce((n, c) => n + (c.summaryCompleted || 0), 0); this.store.put("knowledgeSession", root);

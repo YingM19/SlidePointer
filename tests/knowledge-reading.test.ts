@@ -63,13 +63,17 @@ test("60页图文完整覆盖，仅10批读取；后一章从前面章节成果�
     const children = result.chapters.map(c => f.store.get<KnowledgeReadSession>("knowledgeSession", c.sessionId!)!);
     assert.equal(children[0].parent!.through, result.baseCheckpoint!.through, "第一章从课程框架开始");
     assert.ok(children[1].parent!.through > children[0].parent!.through);
-    assert.ok(readingHistory(f.store, children[1].parent).some(h => h.prompt.includes(`《${f.docs[0].name}》当前章节成果`)), "第二章继承第一章成果");
+    assert.ok(readingHistory(f.store, children[1].parent).some(h => h.prompt.includes(`《${f.docs[0].name}》章节成果`)), "第二章继承第一章成果");
     assert.equal(new Set(first.map(c => c.sessionId)).size, 1);
     const integrations = f.calls.filter(c => c.input.key.startsWith("integrate:"));
-    assert.equal(integrations.length, 2); assert.ok(integrations.every(c => c.sessionId === result.courseSessionId && c.input.sources?.every(s => !s.image)));
+    assert.equal(integrations.length, 2);
+    // The second update carries the first summary and must cover both chapters, not just the newest.
+    assert.match(integrations[1].input.prompt, new RegExp(`必须覆盖以下全部已整理章节，按课程顺序：《${f.docs[0].name}》、《${f.docs[1].name}》`));
+    assert.ok(integrations[1].input.prompt.includes(`当前课程汇总（需在此基础上更新，保留其他章节内容）：
+成果 integrate:${r.id}:${f.docs[0].id}`)); assert.ok(integrations.every(c => c.sessionId === result.courseSessionId && c.input.sources?.every(s => !s.image)));
     assert.equal(result.checkpoint?.completed, 66); assert.equal(f.closes(), 1);
     const frozen = structuredClone(children[0].parent!);
-    assert.ok(readingHistory(f.store, frozen).every(h => !h.prompt.includes("替换此前同章结论")));
+    assert.ok(readingHistory(f.store, frozen).every(h => !h.prompt.includes("更新整门课程的课程汇总")));
   } finally { f.close(); }
 });
 
