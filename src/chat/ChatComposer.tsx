@@ -377,7 +377,8 @@ export function ChatComposer({ r }: { r: Reader }) {
           onClick={() => openMenu("model")}
           title={selected?.model || "选择模型"}
         >
-          <span>{selected?.displayName || "选择模型"}{effort && modelEfforts(selected).length ? ` · ${effortLabel(effort)}` : ""}</span>
+          <span>{selected?.displayName || "选择模型"}</span>
+          {effort && modelEfforts(selected).length ? <span className="model-effort">{effortLabel(effort)}</span> : null}
           <Icon name="down" size={11} />
         </button>
         <select className="composer-scope" aria-label="资料范围" value={data.scope} onChange={e => r.patchDraft({ scope: e.target.value as Scope })}>{(Object.keys(scopeInfo) as Scope[]).map(scope => <option key={scope} value={scope}>{scope === "full" && r.course ? "课程来源" : scopeInfo[scope][0]}</option>)}</select>
@@ -395,24 +396,7 @@ export function ChatComposer({ r }: { r: Reader }) {
         >
           {menu === "settings" && (
             <div className="composer-settings">
-              <label>
-                范围
-                <select
-                  value={data.scope}
-                  onChange={(e) =>
-                    r.patchDraft({ scope: e.target.value as Scope })
-                  }
-                >
-                  {(Object.keys(scopeInfo) as Scope[]).map((scope) => (
-                    <option key={scope} value={scope}>
-                      {scope === "full" && r.course
-                        ? "课程来源"
-                        : scopeInfo[scope][0]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
+              <label title="通过提示词要求篇幅，不改变模型参数">
                 回答长度
                 <select
                   value={data.answerLength}
@@ -427,6 +411,7 @@ export function ChatComposer({ r }: { r: Reader }) {
                   <option value="detailed">详细</option>
                 </select>
               </label>
+              <small className="setting-hint">回答长度通过提示词控制篇幅；模型和思考强度在底部模型按钮中选择。</small>
               <label>
                 问答字号
                 <select
@@ -457,7 +442,7 @@ export function ChatComposer({ r }: { r: Reader }) {
                     r.patchDraft({ agentTools: e.target.checked })
                   }
                 />
-                课件工具
+                课件工具<small className="setting-hint">允许模型自行检索、读取其他页</small>
               </label>
               <label>
                 <input

@@ -758,6 +758,7 @@
   white-space: nowrap;
 }
 .model-effort {
+  flex: none;
   white-space: nowrap;
   color: #959595;
 }
