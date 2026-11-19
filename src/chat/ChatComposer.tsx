@@ -223,7 +223,7 @@ export function ChatComposer({ r }: { r: Reader }) {
             onClick={() => r.setPreview(!r.preview)}
           >
             <Icon name={data.pinned ? "pin" : "file"} size={14} />
-            {data.pinned ? "已锁定" : "当前页"}
+            {data.pinned ? "提问位置（已锁定）" : "提问位置"}
             <strong>第 {draft.page} 页</strong>
             <Icon name="down" size={12} />
           </button>
