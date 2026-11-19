@@ -51,6 +51,8 @@ export interface AIUserPreferences {
   recent: string[];
   names: Record<string, string>;
   profiles: Record<"quick" | "deep" | "batch", AISettings>;
+  // The user's own model order (modelKey list); models not in it follow in their usual order.
+  modelOrder?: string[];
 }
 export interface AIMemory {
   id: string;
@@ -238,6 +240,22 @@ export function withPresetEfforts<T extends AIConnection>(connection: T): T {
 // Subscription connections run a local official CLI and never use a base URL or API key.
 export const localCli = (protocol: AIProtocol) => protocol === "codex" || protocol === "claude-code";
 export const modelKey = (connectionId: string | undefined, model: string) => `${connectionId || DEFAULT_CONNECTION}::${model}`;
+// Without a custom order, favorites come first; once the user orders the list, their order is kept exactly.
+export function orderModels<T extends { connectionId?: string; model: string }>(models: T[], prefs?: Pick<AIUserPreferences, "favorites" | "modelOrder">): T[] {
+  const order = prefs?.modelOrder || [];
+  const rank = (m: T) => { const i = order.indexOf(modelKey(m.connectionId, m.model)); return i < 0 ? order.length : i; };
+  if (order.length) return [...models].sort((a, b) => rank(a) - rank(b));
+  const favorite = (m: T) => Number(!!prefs?.favorites.includes(modelKey(m.connectionId, m.model)));
+  return [...models].sort((a, b) => favorite(b) - favorite(a));
+}
+// Moves one model up or down within the full ordered list and returns the new saved order.
+export function moveModel<T extends { connectionId?: string; model: string }>(models: T[], prefs: Pick<AIUserPreferences, "favorites" | "modelOrder"> | undefined, key: string, step: -1 | 1) {
+  const keys = orderModels(models, prefs).map(m => modelKey(m.connectionId, m.model));
+  const i = keys.indexOf(key), j = i + step;
+  if (i < 0 || j < 0 || j >= keys.length) return keys;
+  [keys[i], keys[j]] = [keys[j], keys[i]];
+  return keys;
+}
 export const profileLabels = { quick: "快速解释", deep: "深入分析", batch: "批量整理" };
 export function builtinAssistants(): AssistantProfile[] {
   return [

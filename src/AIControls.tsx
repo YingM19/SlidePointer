@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AIModel, AISettings } from "../shared/types.ts";
-import { modelKey, profileLabels, selectedModel } from "../shared/ai.ts";
+import { modelKey, moveModel, orderModels, profileLabels, selectedModel } from "../shared/ai.ts";
 import type { useAIConfig } from "./useAIConfig.ts";
 
 export { selectedModel };
@@ -8,14 +8,16 @@ const effortNames: Record<string, string> = { none: "不额外思考", minimal: 
 export const effortLabel = (effort: string) => effortNames[effort] || effort;
 export type AIState = ReturnType<typeof useAIConfig>;
 export function ModelList({ models, value, onChange, ai, onDone }: { models: AIModel[]; value: AISettings; onChange: (v: AISettings) => void; ai: AIState; onDone?: () => void }) {
-  const [search, setSearch] = useState(""), [filter, setFilter] = useState("all"), [error, setError] = useState("");
+  const [search, setSearch] = useState(""), [filter, setFilter] = useState("all"), [error, setError] = useState(""), [arranging, setArranging] = useState(false);
   const prefs = ai.config?.preferences;
   const selected = selectedModel(models, value, prefs?.defaultConnectionId);
   const chosenKey = selected && modelKey(selected.connectionId, selected.model);
-  const ordered = models.filter(m => {
+  // While arranging, the whole list is shown so each move is between real neighbours.
+  const ordered = orderModels(models, prefs).filter(m => {
     const key = modelKey(m.connectionId, m.model);
-    return (!search || `${m.displayName} ${m.model} ${m.connectionName} ${prefs?.names[key] || ""}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "favorite" ? prefs?.favorites : prefs?.recent)?.includes(key));
-  }).sort((a, b) => Number(!!prefs?.favorites.includes(modelKey(b.connectionId, b.model))) - Number(!!prefs?.favorites.includes(modelKey(a.connectionId, a.model))));
+    return arranging || (!search || `${m.displayName} ${m.model} ${m.connectionName} ${prefs?.names[key] || ""}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "favorite" ? prefs?.favorites : prefs?.recent)?.includes(key));
+  });
+  const move = (key: string, step: -1 | 1) => void ai.savePreferences({ modelOrder: moveModel(models, prefs, key, step) }).catch(e => setError(e.message));
   const pick = async (m: AIModel) => {
     const key = modelKey(m.connectionId, m.model);
     onChange({ connectionId: m.connectionId || "codex", model: m.model, reasoningEffort: undefined, textOnly: m.capabilities?.vision === false ? true : value.textOnly });
@@ -23,13 +25,16 @@ export function ModelList({ models, value, onChange, ai, onDone }: { models: AIM
     onDone?.();
   };
   return <div className="ai-model-list">
-    <input className="ai-model-search" aria-label="搜索模型或连接" placeholder="搜索模型或连接…" value={search} onChange={e => setSearch(e.target.value)} autoFocus />
-    <div className="ai-segments" aria-label="模型分类">{[["all", "全部"], ["favorite", "收藏"], ["recent", "最近"]].map(([key, title]) => <button key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{title}</button>)}</div>
-    <div className="ai-model-options">{ordered.map(m => {
+    {!arranging && <input className="ai-model-search" aria-label="搜索模型或连接" placeholder="搜索模型或连接…" value={search} onChange={e => setSearch(e.target.value)} autoFocus />}
+    <div className="ai-segments" aria-label="模型分类">{!arranging && [["all", "全部"], ["favorite", "收藏"], ["recent", "最近"]].map(([key, title]) => <button key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{title}</button>)}
+      {models.length > 1 && <button className="ai-arrange" aria-pressed={arranging} onClick={() => setArranging(a => !a)}>{arranging ? "完成排序" : "调整顺序"}</button>}
+      {arranging && !!prefs?.modelOrder?.length && <button onClick={() => void ai.savePreferences({ modelOrder: [] }).catch(e => setError(e.message))} title="恢复为收藏优先、按连接排列">恢复默认</button>}</div>
+    <div className="ai-model-options">{ordered.map((m, i) => {
       const key = modelKey(m.connectionId, m.model), cap = m.capabilities;
       return <div className={`ai-model-row ${key === chosenKey ? "selected" : ""}`} key={key}>
-        <button className="ai-model-choice" onClick={() => void pick(m)} aria-pressed={key === chosenKey}><strong>{prefs?.names[key] || m.displayName}</strong><small>{m.connectionName} · {m.model}</small><span className="ai-capabilities">{cap?.vision === true ? "图像" : cap?.vision === false ? "文字" : "图像待确认"} · {cap?.tools === true ? "工具" : cap?.tools === false ? "无工具" : "工具待确认"}{cap?.reasoning === true ? " · 推理" : ""}</span></button>
-        <button className="ai-favorite" aria-label={`${prefs?.favorites.includes(key) ? "取消收藏" : "收藏"} ${m.displayName}`} aria-pressed={prefs?.favorites.includes(key) || false} onClick={() => void ai.savePreferences({ favorites: prefs?.favorites.includes(key) ? prefs.favorites.filter(x => x !== key) : [...(prefs?.favorites || []), key] }).catch(e => setError(e.message))}>{prefs?.favorites.includes(key) ? "★" : "☆"}</button>
+        <button className="ai-model-choice" disabled={arranging} onClick={() => void pick(m)} aria-pressed={key === chosenKey}><strong>{prefs?.names[key] || m.displayName}</strong><small>{m.connectionName} · {m.model}</small><span className="ai-capabilities">{cap?.vision === true ? "图像" : cap?.vision === false ? "文字" : "图像待确认"} · {cap?.tools === true ? "工具" : cap?.tools === false ? "无工具" : "工具待确认"}{cap?.reasoning === true ? " · 推理" : ""}</span></button>
+        {arranging ? <span className="ai-move"><button aria-label={`上移 ${m.displayName}`} disabled={i === 0} onClick={() => move(key, -1)}>↑</button><button aria-label={`下移 ${m.displayName}`} disabled={i === ordered.length - 1} onClick={() => move(key, 1)}>↓</button></span> :
+        <button className="ai-favorite" aria-label={`${prefs?.favorites.includes(key) ? "取消收藏" : "收藏"} ${m.displayName}`} aria-pressed={prefs?.favorites.includes(key) || false} onClick={() => void ai.savePreferences({ favorites: prefs?.favorites.includes(key) ? prefs.favorites.filter(x => x !== key) : [...(prefs?.favorites || []), key] }).catch(e => setError(e.message))}>{prefs?.favorites.includes(key) ? "★" : "☆"}</button>}
       </div>;
     })}</div>
     {!ordered.length && <p className="muted">{models.length ? "没有匹配的模型" : "先在连接中心配置服务并获取模型。"}</p>}
@@ -39,7 +44,12 @@ export function ModelList({ models, value, onChange, ai, onDone }: { models: AIM
 }
 export function ModelSelect({ models, value, onChange, ai }: { models: AIModel[]; value: AISettings; onChange: (v: AISettings) => void; ai: AIState }) {
   const selected = selectedModel(models, value, ai.config?.preferences.defaultConnectionId);
-  return <select aria-label="模型与连接" value={selected ? modelKey(selected.connectionId, selected.model) : ""} onChange={e => { const m = models.find(m => modelKey(m.connectionId, m.model) === e.target.value); if (m) onChange({ connectionId: m.connectionId || "codex", model: m.model, reasoningEffort: undefined, textOnly: m.capabilities?.vision === false ? true : value.textOnly }); }}><option value="">选择模型</option>{(ai.config?.connections || []).map(c => <optgroup key={c.id} label={c.name}>{models.filter(m => (m.connectionId || "codex") === c.id).map(m => <option key={m.model} value={modelKey(c.id, m.model)}>{ai.config?.preferences.names[modelKey(c.id, m.model)] || m.displayName}{m.capabilities?.vision === false ? "（文字）" : ""}</option>)}</optgroup>)}</select>;
+  return <select aria-label="模型与连接" value={selected ? modelKey(selected.connectionId, selected.model) : ""} onChange={e => { const m = models.find(m => modelKey(m.connectionId, m.model) === e.target.value); if (m) onChange({ connectionId: m.connectionId || "codex", model: m.model, reasoningEffort: undefined, textOnly: m.capabilities?.vision === false ? true : value.textOnly }); }}><option value="">选择模型</option>{groupsInOrder(ai, models).map(([c, list]) => <optgroup key={c.id} label={c.name}>{list.map(m => <option key={m.model} value={modelKey(c.id, m.model)}>{ai.config?.preferences.names[modelKey(c.id, m.model)] || m.displayName}{m.capabilities?.vision === false ? "（文字）" : ""}</option>)}</optgroup>)}</select>;
+}
+function groupsInOrder(ai: AIState, models: AIModel[]) {
+  const list = orderModels(models, ai.config?.preferences);
+  const first = (id: string) => { const i = list.findIndex(m => (m.connectionId || "codex") === id); return i < 0 ? list.length : i; };
+  return [...(ai.config?.connections || [])].sort((a, b) => first(a.id) - first(b.id)).map(c => [c, list.filter(m => (m.connectionId || "codex") === c.id)] as const);
 }
 export function AssistantSelect({ ai, value, onChange }: { ai: AIState; value: AISettings; onChange: (v: AISettings, scope?: "page" | "nearby" | "full") => void }) {
   return <select aria-label="选择助手" value={value.assistantId || "explain"} onChange={e => { const a = ai.config?.assistants.find(a => a.id === e.target.value); if (a) onChange({ ...a.settings, assistantId: a.id }, a.scope); }}>{(ai.config?.assistants || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>;

@@ -18,7 +18,7 @@ import { ResearchService } from "../server/ai-research.ts";
 import { NotesService } from "../server/notes.ts";
 import { Scheduler } from "../server/scheduler.ts";
 import { ChatService } from "../server/chat.ts";
-import { connectionPresets, contextWindowFor, defaultEffort, modelEfforts, withKnownCapabilities, withPresetEfforts, type AIConnection, type ResearchRun, type ResearchArtifact } from "../shared/ai.ts";
+import { connectionPresets, contextWindowFor, defaultEffort, modelEfforts, withKnownCapabilities, withPresetEfforts, orderModels, moveModel, type AIConnection, type ResearchRun, type ResearchArtifact } from "../shared/ai.ts";
 import type { Document, Turn } from "../shared/types.ts";
 
 test("思考强度：默认值计入可选项，不支持推理时不发送，空白项被忽略", async () => {
@@ -363,4 +363,15 @@ test("DeepSeek V4 按官方说明补全能力：视觉版可读图，未确认�
   assert.equal(userSet.capabilities?.vision, true);
   assert.deepEqual(other.capabilities, unknown);
   assert.equal(contextWindowFor(vision), 1000000);
+});
+
+test("模型顺序：未自定义时收藏优先；自定义后严格按用户顺序，新模型排在后面", () => {
+  const m = (c: string, model: string) => ({ connectionId: c, model });
+  const models = [m("codex", "a"), m("codex", "b"), m("claude", "sonnet"), m("claude", "opus")];
+  const keys = (list: { connectionId?: string; model: string }[]) => list.map(x => `${x.connectionId}::${x.model}`);
+  assert.deepEqual(keys(orderModels(models, { favorites: ["claude::opus"] })), ["claude::opus", "codex::a", "codex::b", "claude::sonnet"]);
+  const order = moveModel(models, { favorites: [] }, "claude::sonnet", -1);
+  assert.deepEqual(order, ["codex::a", "claude::sonnet", "codex::b", "claude::opus"]);
+  assert.deepEqual(keys(orderModels([...models, m("ds", "v4")], { favorites: ["claude::opus"], modelOrder: order })), [...order, "ds::v4"], "收藏不再浮到顶部，新模型在最后");
+  assert.deepEqual(moveModel(models, { favorites: [], modelOrder: order }, "codex::a", -1), order, "已在最上面时不变");
 });
