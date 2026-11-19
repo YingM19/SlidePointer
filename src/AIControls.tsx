@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { AIModel, AISettings } from "../shared/types.ts";
 import { modelKey, moveModel, orderModels, profileLabels, selectedModel } from "../shared/ai.ts";
 import type { useAIConfig } from "./useAIConfig.ts";
@@ -17,7 +17,26 @@ export function ModelList({ models, value, onChange, ai, onDone }: { models: AIM
     const key = modelKey(m.connectionId, m.model);
     return arranging || (!search || `${m.displayName} ${m.model} ${m.connectionName} ${prefs?.names[key] || ""}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "favorite" ? prefs?.favorites : prefs?.recent)?.includes(key));
   });
-  const move = (key: string, step: -1 | 1) => void ai.savePreferences({ modelOrder: moveModel(models, prefs, key, step) }).catch(e => setError(e.message));
+  // The moved row is re-inserted in the DOM, so the handle is focused again for the next key press.
+  const move = (key: string, step: -1 | 1) => void ai.savePreferences({ modelOrder: moveModel(models, prefs, key, step) })
+    .then(() => requestAnimationFrame(() => document.querySelector<HTMLElement>(`.ai-drag-handle[data-model-key="${CSS.escape(key)}"]`)?.focus()))
+    .catch(e => setError(e.message));
+  // Dragging reorders a local preview live; dropping saves it, cancelling restores the saved order.
+  const [preview, setPreview] = useState<string[] | null>(null);
+  const dragging = useRef(""), dropped = useRef(false);
+  const keyOf = (m: AIModel) => modelKey(m.connectionId, m.model);
+  const byKey = new Map(models.map(m => [keyOf(m), m]));
+  const shown = arranging && preview ? preview.map(k => byKey.get(k)).filter((m): m is AIModel => !!m) : ordered;
+  const dragOver = (target: string) => {
+    const from = dragging.current;
+    if (!from || from === target) return;
+    setPreview(current => {
+      const list = current || ordered.map(keyOf), at = list.indexOf(target);
+      if (at < 0) return current;
+      const next = list.filter(k => k !== from); next.splice(at, 0, from);
+      return next;
+    });
+  };
   const pick = async (m: AIModel) => {
     const key = modelKey(m.connectionId, m.model);
     onChange({ connectionId: m.connectionId || "codex", model: m.model, reasoningEffort: undefined, textOnly: m.capabilities?.vision === false ? true : value.textOnly });
@@ -29,15 +48,25 @@ export function ModelList({ models, value, onChange, ai, onDone }: { models: AIM
     <div className="ai-segments" aria-label="模型分类">{!arranging && [["all", "全部"], ["favorite", "收藏"], ["recent", "最近"]].map(([key, title]) => <button key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{title}</button>)}
       {models.length > 1 && <button className="ai-arrange" aria-pressed={arranging} onClick={() => setArranging(a => !a)}>{arranging ? "完成排序" : "调整顺序"}</button>}
       {arranging && !!prefs?.modelOrder?.length && <button onClick={() => void ai.savePreferences({ modelOrder: [] }).catch(e => setError(e.message))} title="恢复为收藏优先、按连接排列">恢复默认</button>}</div>
-    <div className="ai-model-options">{ordered.map((m, i) => {
-      const key = modelKey(m.connectionId, m.model), cap = m.capabilities;
-      return <div className={`ai-model-row ${key === chosenKey ? "selected" : ""}`} key={key}>
-        <button className="ai-model-choice" disabled={arranging} onClick={() => void pick(m)} aria-pressed={key === chosenKey}><strong>{prefs?.names[key] || m.displayName}</strong><small>{m.connectionName} · {m.model}</small><span className="ai-capabilities">{cap?.vision === true ? "图像" : cap?.vision === false ? "文字" : "图像待确认"} · {cap?.tools === true ? "工具" : cap?.tools === false ? "无工具" : "工具待确认"}{cap?.reasoning === true ? " · 推理" : ""}</span></button>
-        {arranging ? <span className="ai-move"><button aria-label={`上移 ${m.displayName}`} disabled={i === 0} onClick={() => move(key, -1)}>↑</button><button aria-label={`下移 ${m.displayName}`} disabled={i === ordered.length - 1} onClick={() => move(key, 1)}>↓</button></span> :
+    {arranging && <p className="ai-arrange-hint">拖动模型调整顺序，也可以选中右侧手柄后按 ↑ ↓。</p>}
+    <div className="ai-model-options">{shown.map(m => {
+      const key = keyOf(m), cap = m.capabilities;
+      return <div className={`ai-model-row ${key === chosenKey ? "selected" : ""} ${arranging ? "arranging" : ""} ${preview && dragging.current === key ? "dragging" : ""}`} key={key}
+        draggable={arranging}
+        onDragStart={arranging ? e => { dragging.current = key; dropped.current = false; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", key); setPreview(ordered.map(keyOf)); } : undefined}
+        onDragOver={arranging ? e => { e.preventDefault(); dragOver(key); } : undefined}
+        onDrop={arranging ? e => { e.preventDefault(); dropped.current = true; if (preview) void ai.savePreferences({ modelOrder: preview }).catch(err => setError(err.message)).finally(() => setPreview(null)); } : undefined}
+        onDragEnd={arranging ? () => { dragging.current = ""; if (!dropped.current) setPreview(null); } : undefined}>
+        {(() => {
+          const info = <><strong>{prefs?.names[key] || m.displayName}</strong><small>{m.connectionName} · {m.model}</small><span className="ai-capabilities">{cap?.vision === true ? "图像" : cap?.vision === false ? "文字" : "图像待确认"} · {cap?.tools === true ? "工具" : cap?.tools === false ? "无工具" : "工具待确认"}{cap?.reasoning === true ? " · 推理" : ""}</span></>;
+          // A disabled button would swallow the press that starts a drag, so arranging shows plain content.
+          return arranging ? <div className="ai-model-choice">{info}</div> : <button className="ai-model-choice" onClick={() => void pick(m)} aria-pressed={key === chosenKey}>{info}</button>;
+        })()}
+        {arranging ? <button className="ai-drag-handle" data-model-key={key} aria-label={`调整 ${m.displayName} 的位置（↑ ↓）`} title="拖动，或按 ↑ ↓" onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); move(key, e.key === "ArrowUp" ? -1 : 1); } }}>⠿</button> :
         <button className="ai-favorite" aria-label={`${prefs?.favorites.includes(key) ? "取消收藏" : "收藏"} ${m.displayName}`} aria-pressed={prefs?.favorites.includes(key) || false} onClick={() => void ai.savePreferences({ favorites: prefs?.favorites.includes(key) ? prefs.favorites.filter(x => x !== key) : [...(prefs?.favorites || []), key] }).catch(e => setError(e.message))}>{prefs?.favorites.includes(key) ? "★" : "☆"}</button>}
       </div>;
     })}</div>
-    {!ordered.length && <p className="muted">{models.length ? "没有匹配的模型" : "先在连接中心配置服务并获取模型。"}</p>}
+    {!shown.length && <p className="muted">{models.length ? "没有匹配的模型" : "先在连接中心配置服务并获取模型。"}</p>}
     {(error || ai.error) && <p role="alert" className="turn-error">{error || ai.error}</p>}
     <button className="ai-manage-link" onClick={() => { onDone?.(); window.dispatchEvent(new CustomEvent("pointer:connect")); }}>管理 AI 连接 ↗</button>
   </div>;

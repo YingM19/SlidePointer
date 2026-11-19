@@ -89,9 +89,12 @@
 .effort-picker > span { font-size: 12px; color: #8c8f7c; }
 .effort-picker .ai-segments { margin: 0; flex-wrap: wrap; }
 .ai-segments .ai-arrange { margin-left: auto; color: #8c6a4f; }
-.ai-move { display: flex; flex-direction: column; gap: 2px; padding: 0 6px; }
-.ai-move button { border: 1px solid #e3ddcc; background: #fbfaf5; border-radius: 5px; width: 28px; height: 22px; font-size: 12px; padding: 0; }
-.ai-move button:disabled { opacity: .35; }
+.ai-arrange-hint { font-size: 12px; color: #8c8f7c; margin: 0 4px 6px; }
+.ai-model-row.arranging { cursor: grab; }
+.ai-model-row.arranging .ai-model-choice { cursor: grab; user-select: none; }
+.ai-model-row.dragging { opacity: .45; border-style: dashed; border-color: #cbbf9f; }
+.ai-drag-handle { border: 0; background: transparent; color: #a39a83; font-size: 18px; padding: 4px 10px; cursor: grab; border-radius: 6px; }
+.ai-drag-handle:focus-visible { outline: 2px solid #c9a27c; }
 .ai-model-options { max-height: min(360px, 42dvh); overflow-y: auto; }
 .ai-model-row { display: flex; align-items: center; margin: 3px 0; border-radius: 8px; border: 1px solid transparent; }
 .ai-model-row.selected { background: #f0ece2; border-color: #e6dccb; }
