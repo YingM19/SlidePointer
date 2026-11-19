@@ -162,7 +162,8 @@ export function readingShortcut(
       if (e.key === "?") action = "help";
     }
   }
-  if (!includeRepeats && e.repeat && action !== "up" && action !== "down")
+  // Holding an arrow or Page key keeps scrolling or paging; the page turn itself skips while a page is still rendering.
+  if (!includeRepeats && e.repeat && !["up", "down", "previous", "next"].includes(action || ""))
     return;
   return action;
 }

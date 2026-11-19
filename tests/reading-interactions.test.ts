@@ -131,7 +131,7 @@ test("editing, composition, other workspaces and handled events never trigger sh
     undefined,
   );
 });
-test("single-key preference and long-press protection keep scrolling available", () => {
+test("single-key preference and long-press protection for tool keys keep scrolling available", () => {
   for (const k of ["b", "g", "?", "+", "0"])
     assert.equal(
       readingShortcut(key(k), { ...context, singleKeys: false }),
@@ -145,7 +145,7 @@ test("single-key preference and long-press protection keep scrolling available",
     readingShortcut(key("ArrowDown", { repeat: true }), context),
     "down",
   );
-  for (const k of ["ArrowRight", "b", "?", "+"])
+  for (const k of ["b", "?", "+"])
     assert.equal(readingShortcut(key(k, { repeat: true }), context), undefined);
   assert.equal(
     readingShortcut(key("PageDown", { repeat: true }), context, true),
@@ -166,4 +166,10 @@ test("Ctrl wheel zoom normalizes units, direction and limits", () => {
   assert.equal(wheelZoom(4, -120, 0, 700), 4);
   assert.equal(wheelZoom(0.1, 120, 0, 700), 0.1);
   assert.equal(wheelZoom(1.5, 0, 0, 700), 1.5);
+});
+
+test("holding an arrow or Page key keeps paging; other keys do not repeat", () => {
+  for (const [k, action] of [["ArrowRight", "next"], ["PageDown", "next"], ["ArrowLeft", "previous"], ["PageUp", "previous"], ["ArrowDown", "down"]])
+    assert.equal(readingShortcut(key(k, { repeat: true }), context), action);
+  for (const k of ["b", "+", "Home"]) assert.equal(readingShortcut(key(k, { repeat: true }), context), undefined);
 });
