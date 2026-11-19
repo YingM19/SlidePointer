@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { Store } from "../server/store.ts";
 import { ChatService } from "../server/chat.ts";
 import { DraftStore } from "../shared/drafts.ts";
-import { sourceMap, citedSources, portableAnswer, deletedSources } from "../shared/chat.ts";
+import { anchoredPage, sourceMap, citedSources, portableAnswer, deletedSources } from "../shared/chat.ts";
 import { ReadTools } from "../server/reader-tools.ts";
 import type {
   Conversation,
@@ -424,4 +424,15 @@ test("按会话读取问答走索引，顺序和隔离与全表筛选一致", ()
     assert.ok(path.resolve(dir).startsWith(path.join(os.tmpdir(), "lecture-turns-")));
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("课程范围问题只在锁定页面、有选区或引用时附上提问位置所在页", () => {
+  const base = { scope: "full" as const, courseId: "course", selectedText: "" };
+  assert.equal(anchoredPage(base), false, "浏览到哪页就带哪页，对课程问题是噪音");
+  assert.equal(anchoredPage({ ...base, pagePinned: true }), true);
+  assert.equal(anchoredPage({ ...base, selectedText: "光栅化" }), true);
+  assert.equal(anchoredPage({ ...base, rect: [0, 0, 1, 1] }), true);
+  assert.equal(anchoredPage({ ...base, selections: [{} as any] }), true);
+  assert.equal(anchoredPage({ ...base, courseId: undefined }), true, "单份课件的全文检索仍以当前页为起点");
+  assert.equal(anchoredPage({ ...base, scope: "nearby" }), true);
 });

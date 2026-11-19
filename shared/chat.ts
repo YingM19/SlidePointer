@@ -1,4 +1,10 @@
-import type { Conversation, Source, Turn } from "./types.ts";
+import type { Conversation, QuestionSnapshot, Source, Turn } from "./types.ts";
+
+// A course-wide question asked while merely browsing a page is not about that page: send it only when
+// the user pinned the page, selected something on it, or the scope is local.
+export function anchoredPage(s: Pick<QuestionSnapshot, "scope" | "courseId" | "rect" | "selectedText" | "pagePinned" | "selections">) {
+  return !(s.scope === "full" && !!s.courseId && !s.rect && !s.selectedText && !s.pagePinned && !s.selections?.length);
+}
 
 export function sourceMap(turns: Turn[], documentId?: string) {
   return new Map(

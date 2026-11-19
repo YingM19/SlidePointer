@@ -36,6 +36,7 @@ export function useChatDraft(
     selectedText: data.selectedText,
     rect: data.rect,
     scope: data.scope,
+    pagePinned: !!data.pinned,
     extraPages: data.extraPages,
     answerLength: data.answerLength,
     replyTurnId: data.replyTurnId,

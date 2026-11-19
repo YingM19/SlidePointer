@@ -91,6 +91,8 @@ export interface QuestionSnapshot {
   selectedText: string;
   rect?: Rect;
   scope: Scope;
+  // The user locked the question to this page instead of following the reader.
+  pagePinned?: boolean;
   extraPages: number[];
   images: string[];
   sources: Source[];
