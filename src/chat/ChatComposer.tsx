@@ -9,7 +9,7 @@ import type { Reader } from "../useReader.ts";
 import { api, renderUrl } from "../api.ts";
 import { Icon } from "../controls.tsx";
 import type { AnswerLength, Scope } from "../../shared/types.ts";
-import { ModelList, AssistantSelect, ProfileButtons } from "../AIControls.tsx";
+import { ModelList, AssistantSelect, ProfileButtons, effortLabel } from "../AIControls.tsx";
 import { currentModel, defaultEffort, modelEfforts } from "../../shared/ai.ts";
 import { applyChatFont, chatFontSizes, readChatFont, saveChatFont, type ChatFont } from "../chatFont.ts";
 
@@ -17,16 +17,6 @@ const scopeInfo = {
   page: ["当前页", "整页图像、选区及附加页面"],
   nearby: ["附近页", "当前页及前后各两页的文字"],
   full: ["整份课件检索", "按问题检索相关页面，可用工具继续查阅"],
-};
-const effortNames: Record<string, string> = {
-  none: "不额外思考",
-  minimal: "极轻量",
-  low: "轻量",
-  medium: "标准",
-  high: "深入",
-  xhigh: "更深入",
-  max: "最高",
-  ultra: "极深",
 };
 function Popup({
   title,
@@ -387,7 +377,7 @@ export function ChatComposer({ r }: { r: Reader }) {
           onClick={() => openMenu("model")}
           title={selected?.model || "选择模型"}
         >
-          <span>{selected?.displayName || "选择模型"}</span>
+          <span>{selected?.displayName || "选择模型"}{effort && modelEfforts(selected).length ? ` · ${effortLabel(effort)}` : ""}</span>
           <Icon name="down" size={11} />
         </button>
         <select className="composer-scope" aria-label="资料范围" value={data.scope} onChange={e => r.patchDraft({ scope: e.target.value as Scope })}>{(Object.keys(scopeInfo) as Scope[]).map(scope => <option key={scope} value={scope}>{scope === "full" && r.course ? "课程来源" : scopeInfo[scope][0]}</option>)}</select>
@@ -419,22 +409,6 @@ export function ChatComposer({ r }: { r: Reader }) {
                       {scope === "full" && r.course
                         ? "课程来源"
                         : scopeInfo[scope][0]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                思考强度
-                <select
-                  value={effort || ""}
-                  onChange={(e) =>
-                    r.patchDraft({ reasoningEffort: e.target.value })
-                  }
-                >
-                  {!effort && <option value="">模型默认</option>}
-                  {modelEfforts(selected).map((e) => (
-                    <option key={e} value={e}>
-                      {effortNames[e] || e}
                     </option>
                   ))}
                 </select>
@@ -499,7 +473,18 @@ export function ChatComposer({ r }: { r: Reader }) {
             </div>
           )}
           {menu === "model" && (
-            <ModelList models={models} value={modelValue} ai={r.ai} onChange={v => r.patchDraft(v)} onDone={() => setMenu("")} />
+            <>
+              {/* Effort belongs to the chosen model, so it is set right where the model is. */}
+              {modelEfforts(selected).length > 0 && (
+                <div className="effort-picker" role="group" aria-label="思考强度">
+                  <span>思考强度</span>
+                  <div className="ai-segments">
+                    {modelEfforts(selected).map(e => <button key={e} aria-pressed={e === effort} onClick={() => r.patchDraft({ reasoningEffort: e })}>{effortLabel(e)}</button>)}
+                  </div>
+                </div>
+              )}
+              <ModelList models={models} value={modelValue} ai={r.ai} onChange={v => r.patchDraft(v)} onDone={() => setMenu("")} />
+            </>
           )}
         </Popup>
       )}

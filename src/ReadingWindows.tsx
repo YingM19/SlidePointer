@@ -14,7 +14,7 @@ import { requestPointer, selectedOrBlock } from "./selection.ts";
 import { api, renderUrl } from "./api.ts";
 import { Icon } from "./controls.tsx";
 import { requestSaveAnswer } from "./useNotes.ts";
-import { ModelSelect, AssistantSelect, selectedModel } from "./AIControls.tsx";
+import { ModelSelect, AssistantSelect, selectedModel, effortLabel } from "./AIControls.tsx";
 import { ReadingSeedLabel } from "./ReadingSeedLabel.tsx";
 function Window({
   session: s,
@@ -385,7 +385,7 @@ function Window({
                   )}
                   {modelEfforts(model).map((e) => (
                     <option key={e} value={e}>
-                      {e}
+                      {effortLabel(e)}
                     </option>
                   ))}
                 </select>

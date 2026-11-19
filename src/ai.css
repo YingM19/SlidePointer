@@ -85,6 +85,9 @@
 .ai-segments { display: flex; gap: 4px; margin: 9px 0; }
 .ai-segments button { border: 0; padding: 5px 11px; background: transparent; font-size: 11px; }
 .ai-segments button[aria-pressed=true] { background: #e8ecdf; color: #536a49; }
+.effort-picker { display: flex; align-items: center; gap: 10px; padding: 4px 8px 8px; border-bottom: 1px solid #ebe7da; margin-bottom: 4px; flex-wrap: wrap; }
+.effort-picker > span { font-size: 12px; color: #8c8f7c; }
+.effort-picker .ai-segments { margin: 0; flex-wrap: wrap; }
 .ai-model-options { max-height: min(360px, 42dvh); overflow-y: auto; }
 .ai-model-row { display: flex; align-items: center; margin: 3px 0; border-radius: 8px; border: 1px solid transparent; }
 .ai-model-row.selected { background: #f0ece2; border-color: #e6dccb; }

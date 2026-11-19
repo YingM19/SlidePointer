@@ -4,6 +4,8 @@ import { modelKey, profileLabels, selectedModel } from "../shared/ai.ts";
 import type { useAIConfig } from "./useAIConfig.ts";
 
 export { selectedModel };
+const effortNames: Record<string, string> = { none: "不额外思考", minimal: "极轻量", low: "轻量", medium: "标准", high: "深入", xhigh: "更深入", max: "最高", ultra: "极深" };
+export const effortLabel = (effort: string) => effortNames[effort] || effort;
 export type AIState = ReturnType<typeof useAIConfig>;
 export function ModelList({ models, value, onChange, ai, onDone }: { models: AIModel[]; value: AISettings; onChange: (v: AISettings) => void; ai: AIState; onDone?: () => void }) {
   const [search, setSearch] = useState(""), [filter, setFilter] = useState("all"), [error, setError] = useState("");
