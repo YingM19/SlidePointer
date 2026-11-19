@@ -7,8 +7,8 @@ import { ModelSelect, ProfileButtons, AssistantSelect, selectedModel } from "./A
 import { AIToolSettings } from "./AIToolSettings.tsx";
 
 const protocols = { codex: "Codex 订阅", "claude-code": "Claude Code 订阅", openai: "OpenAI Responses", anthropic: "Anthropic Messages", gemini: "Gemini", compatible: "OpenAI 兼容" };
-export function AIConnectionCenter({ r, environment }: { r: Reader; environment?: React.ReactNode }) {
-  const [tab, setTab] = useState("connections"), [selected, setSelected] = useState("codex"), [notice, setNotice] = useState("");
+export function AIConnectionCenter({ r, environment, initialTab = "connections" }: { r: Reader; environment?: React.ReactNode; initialTab?: string }) {
+  const [tab, setTab] = useState(initialTab), [selected, setSelected] = useState("codex"), [notice, setNotice] = useState("");
   const config = r.ai.config;
   // Selecting remounts the editor, so a result message has to survive the switch from here.
   const select = (id: string, text = "") => { setSelected(id); setNotice(text); };

@@ -102,7 +102,7 @@ function App() {
     window.addEventListener("pointer:research", open);
     return () => window.removeEventListener("pointer:research", open);
   }, []);
-  const [settings, setSettings] = useState(false),
+  const [settings, setSettings] = useState(false), [settingsTab, setSettingsTab] = useState("connections"),
     [showJobs, setShowJobs] = useState(false),
     [scale, setScale] = useState(1),
     [windowWidth, setWindowWidth] = useState(window.innerWidth),
@@ -138,7 +138,8 @@ function App() {
     if (id) notes.open(id);
   };
   useEffect(() => {
-    const connection = () => setSettings(true);
+    // An event may name the connection-center tab to open, e.g. "profiles".
+    const connection = (event: Event) => { setSettingsTab((event as CustomEvent<string | undefined>).detail || "connections"); setSettings(true); };
     const chat = () => { setSideView("chat"); if (narrow) setMobileChat(true); else setChatOpen(true); };
     const open = (event: Event) => openNotes((event as CustomEvent<string>).detail);
     const save = (event: Event) => r.guard(async () => {
@@ -1112,7 +1113,7 @@ function App() {
                 onClick={() => setSettings(false)}
               />
             </div>
-            <AIConnectionCenter r={r} environment={<ConnectionSetup r={r} onGuide={() => { setSettings(false); setGuide(true); }} />} />
+            <AIConnectionCenter key={settingsTab} initialTab={settingsTab} r={r} environment={<ConnectionSetup r={r} onGuide={() => { setSettings(false); setGuide(true); }} />} />
           </section>
         </div>
       )}

@@ -395,7 +395,6 @@ export function ChatComposer({ r }: { r: Reader }) {
         >
           {menu === "settings" && (
             <div className="composer-settings">
-              <ProfileButtons ai={r.ai} onChange={v => r.patchDraft(v)} />
               <label>
                 范围
                 <select
@@ -474,6 +473,7 @@ export function ChatComposer({ r }: { r: Reader }) {
           )}
           {menu === "model" && (
             <>
+              <ProfileButtons ai={r.ai} onChange={v => r.patchDraft(v)} />
               {/* Effort belongs to the chosen model, so it is set right where the model is. */}
               {modelEfforts(selected).length > 0 && (
                 <div className="effort-picker" role="group" aria-label="思考强度">

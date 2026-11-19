@@ -44,6 +44,12 @@ export function ModelSelect({ models, value, onChange, ai }: { models: AIModel[]
 export function AssistantSelect({ ai, value, onChange }: { ai: AIState; value: AISettings; onChange: (v: AISettings, scope?: "page" | "nearby" | "full") => void }) {
   return <select aria-label="选择助手" value={value.assistantId || "explain"} onChange={e => { const a = ai.config?.assistants.find(a => a.id === e.target.value); if (a) onChange({ ...a.settings, assistantId: a.id }, a.scope); }}>{(ai.config?.assistants || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>;
 }
+// Saved presets of model, effort and tools. Unconfigured ones are hidden; with none, offer to set them up.
 export function ProfileButtons({ ai, onChange }: { ai: AIState; onChange: (value: AISettings) => void }) {
-  return <div className="ai-profile-buttons">{(Object.entries(profileLabels) as [keyof typeof profileLabels, string][]).map(([key, label]) => <button key={key} disabled={!ai.config?.preferences.profiles[key].model} onClick={() => onChange(ai.config!.preferences.profiles[key])} title={ai.config?.preferences.profiles[key].model ? "使用已保存的模型与参数" : "在连接中心设置此配置"}>{label}</button>)}</div>;
+  const profiles = ai.config?.preferences.profiles;
+  if (!profiles) return null;
+  const ready = (Object.entries(profileLabels) as [keyof typeof profileLabels, string][]).filter(([key]) => profiles[key].model);
+  const describe = (p: AISettings) => [ai.config?.connections.find(c => c.id === p.connectionId)?.models.find(m => m.model === p.model)?.displayName || p.model, p.reasoningEffort && effortLabel(p.reasoningEffort), p.agentTools === false ? "不用课件工具" : "课件工具", p.webSearch && "联网"].filter(Boolean).join(" · ");
+  if (!ready.length) return <button className="ai-profile-setup" onClick={() => window.dispatchEvent(new CustomEvent("pointer:connect", { detail: "profiles" }))} title="在 AI 连接中心为快速解释、深入分析、批量整理各存一套模型与参数">设置常用配置，一键切换模型与强度…</button>;
+  return <div className="ai-profile-buttons" role="group" aria-label="常用配置"><span>常用配置</span>{ready.map(([key, label]) => <button key={key} onClick={() => onChange(profiles[key])} title={describe(profiles[key])}>{label}</button>)}</div>;
 }
