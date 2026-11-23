@@ -20,6 +20,8 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
   const [settings, setSettings] = useState<AISettings>(w.settings), [force, setForce] = useState(false);
   const [scope, setScope] = useState("current"), [selected, setSelected] = useState<string[]>(r.docId ? [r.docId] : []);
   const [history, setHistory] = useState("");
+  // What the last button press started, so a task that fails within seconds still visibly happened.
+  const [launched, setLaunched] = useState<{ label: string; at: Date }>();
   const [recordId, setRecordId] = useState(""), [record, setRecord] = useState<KnowledgeReadSession>();
   const progresses = w.knowledgeProgress.filter(p => p.courseId === course?.id);
   const resultVersion = progresses.map(p => `${p.id}:${p.resultVersion}`).join("|");
@@ -41,9 +43,9 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
     if (course) api<LearningNote[]>(`/courses/${course.id}/notes`).then(list => !disposed && setNotes(list)).catch(e => !disposed && setError(e.message));
     return () => { disposed = true; };
   }, [course?.id, w.notesVersion]);
-  const perform = async (fn: () => Promise<unknown>) => {
+  const perform = async (fn: () => Promise<unknown>, label?: string) => {
     setBusy(true); setError("");
-    try { await fn(); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try { await fn(); if (label) setLaunched({ label, at: new Date() }); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
   if (!course) return <main className="workspace-page"><div className="workspace-empty"><h1>把一门课放在一起</h1><p>每份课件就是一个章节。创建课程后，可以从当前章开始整理。</p><button className="primary" onClick={onCreate}>新建课程</button></div></main>;
   const recent = [...revisions].sort((a, b) => (a.updatedAt || a.createdAt).localeCompare(b.updatedAt || b.createdAt)).at(-1);
@@ -51,6 +53,7 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
   const live = active || progresses.find(p => p.id === recent?.id);
   const task = revisions.find(p => p.id === live?.id) || recent;
   const building = !!active;
+  const failedChapters = (task?.chapters || []).filter(c => c.state === "failed");
   const currentId = course.selectedDocumentIds.includes(r.docId) ? r.docId : course.selectedDocumentIds[0];
   const targets = scope === "all" ? course.selectedDocumentIds : scope === "selected" ? selected.filter(id => course.selectedDocumentIds.includes(id)) : currentId ? [currentId] : [];
   const allSelected = course.selectedDocumentIds.length > 0 && course.selectedDocumentIds.every(id => selected.includes(id));
@@ -70,7 +73,7 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
   const answer = (text: string, map: Map<string, Source>) => <div className="answer answer-v2"><RichAnswer text={text} sources={map} navigate={r.navigateSource} /></div>;
   const start = (overviewOnly = false) => {
     if (!r.requireAI()) return;
-    void perform(() => api(`/courses/${course.id}/knowledge`, { method: "POST", body: JSON.stringify({ ...settings, force, ...(overviewOnly ? { overviewOnly: true } : scope !== "all" ? { documentIds: targets } : {}) }) }));
+    void perform(() => api(`/courses/${course.id}/knowledge`, { method: "POST", body: JSON.stringify({ ...settings, force, ...(overviewOnly ? { overviewOnly: true } : scope !== "all" ? { documentIds: targets } : {}) }) }), overviewOnly ? "汇总" : "整理");
   };
   const historyRevision = revisions.find(k => k.id === history) || recent;
   return <main className="workspace-page overview-page" aria-busy={busy || loading}>
@@ -89,8 +92,10 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
         {building ? <button disabled={busy} onClick={() => void perform(() => api(`/knowledge/${active.id}/cancel`, { method: "POST" }))}>暂停整理</button> : <button className="primary" disabled={busy || !targets.length} onClick={() => start()}>{scope === "all" ? "整理全部" : scope === "selected" ? `整理所选章节 (${targets.length})` : "整理本章"}</button>}
       </div></div>
       <div className="chapter-task-meta"><span>{scope === "current" && currentId ? chapterName(course, r.documents.find(d => d.id === currentId) || { id: currentId, name: "正在载入章节" }) + " · " : ""}{targetPages} 页 · {model?.displayName || "连接后选择模型"} · {settings.reasoningEffort || model?.defaultReasoningEffort || "默认强度"} · {force ? "重新分析" : "优先复用结果"}</span><button disabled={busy || building || !results.size} onClick={() => start(true)}>汇总已整理章节</button></div>
-      {live && <div className="chapter-live" role="status"><span className={building ? "status-dot" : ""} /><span>{building ? live.phase === "framework" ? "正在建立课程框架" : live.phase === "overview" ? "正在汇总已整理章节" : live.phase === "chapter" ? "正在汇总本章" : "正在读取" : live.state === "paused" ? "已暂停" : live.state === "completed" ? "本次整理完成" : "本次整理有未完成内容"}{live.activeDocumentId ? ` · ${chapterName(course, r.documents.find(d => d.id === live.activeDocumentId) || { id: live.activeDocumentId, name: "来源已删除" })}` : ""}{building && live.activePages?.length ? ` · 正在阅读第 ${Math.min(...live.activePages)}–${Math.max(...live.activePages)} 页` : ""} · 已读 {live.completed}/{live.total} 页 · 未读 {Math.max(0, live.total - live.completed - live.failed)} 页{live.failed ? ` · 失败 ${live.failed} 页` : ""} · 复用 {live.reused || 0} 页</span>{!building && task && ["paused", "partial", "failed"].includes(task.state) && <button disabled={busy} onClick={() => { if (r.requireAI()) void perform(() => api(`/knowledge/${task.id}/resume`, { method: "POST", body: JSON.stringify({ retryFailed: task.state !== "paused" }) })); }}>{task.state === "paused" ? "继续整理" : "重试未完成内容"}</button>}</div>}
+      {live && <div className="chapter-live" role="status"><span className={building ? "status-dot" : ""} /><span>{building ? live.phase === "framework" ? "正在建立课程框架" : live.phase === "overview" ? "正在汇总已整理章节" : live.phase === "chapter" ? "正在汇总本章" : "正在读取" : live.state === "paused" ? "已暂停" : live.state === "completed" ? "本次整理完成" : "本次整理有未完成内容"}{live.activeDocumentId ? ` · ${chapterName(course, r.documents.find(d => d.id === live.activeDocumentId) || { id: live.activeDocumentId, name: "来源已删除" })}` : ""}{building && live.activePages?.length ? ` · 正在阅读第 ${Math.min(...live.activePages)}–${Math.max(...live.activePages)} 页` : ""} · 已读 {live.completed}/{live.total} 页 · 未读 {Math.max(0, live.total - live.completed - live.failed)} 页{live.failed ? ` · 失败 ${live.failed} 页` : ""} · 复用 {live.reused || 0} 页</span>{!building && task && ["paused", "partial", "failed"].includes(task.state) && <button disabled={busy} onClick={() => { if (r.requireAI()) void perform(() => api(`/knowledge/${task.id}/resume`, { method: "POST", body: JSON.stringify({ retryFailed: task.state !== "paused" }) }), task.state === "paused" ? "继续整理" : "重试"); }}>{task.state === "paused" ? "继续整理" : "重试未完成内容"}</button>}</div>}
       {building && <progress className="overview-progress" max={Math.max(1, active.total)} value={active.completed} aria-label="已成功读取页数" />}
+      {launched && <p className="task-launch" role="status">{launched.label}已于 {launched.at.toLocaleTimeString("zh-CN")} 开始{building ? "，正在进行…" : failedChapters.length ? `，已结束，仍有 ${failedChapters.length} 章未完成（原因见下）` : "，已结束"}</p>}
+      {!building && failedChapters.length > 0 && <ul className="chapter-failures" aria-label="未完成的章节">{failedChapters.map(c => <li key={c.documentId}><strong>{chapterName(course, r.documents.find(d => d.id === c.documentId) || { id: c.documentId, name: "来源已删除" })}</strong>：{(c.error || "未完成").replace(/^Error:\s*/, "")}</li>)}</ul>}
       {task?.error && <p className="turn-error">{task.error}</p>}
       {error && <p className="turn-error" role="alert">{error}</p>}
       {scope === "selected" && <p className="muted">在下面勾选要整理的章节。资料是否参与问答，仍在“资料”页管理。</p>}

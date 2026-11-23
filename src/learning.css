@@ -257,3 +257,6 @@ input, textarea, select { border-color: #d4d8cf; background: var(--paper); }
   .theme-row { flex-wrap: wrap; }
   .theme-row input { flex-basis: 60%; }
 }
+.task-launch { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.chapter-failures { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: #a1452f; line-height: 1.7; }
+.chapter-failures strong { font-weight: 600; }
