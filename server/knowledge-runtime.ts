@@ -11,6 +11,7 @@ import { invokeProvider } from "./ai-provider.ts";
 import { openPdf, renderPdfPage } from "./pdf.ts";
 import { checkpoint, readingHistory } from "./knowledge-sessions.ts";
 import { ClaudeSessionWorker } from "./claude-sessions.ts";
+import { limitNotice } from "./claude-code.ts";
 
 export interface ReadInput { key: string; prompt: string; sources?: Source[]; pages?: number[]; completePages?: number[] }
 export interface KnowledgeEngine {
@@ -48,7 +49,10 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
     signal.throwIfAborted();
     const session = this.store.get<KnowledgeReadSession>("knowledgeSession", sessionId)!;
     const existing = session.turns.find(t => t.key === input.key);
-    if (existing?.state === "completed") return existing;
+    // A saved limit notice is not a reading result: that step runs again.
+    const spoiled = existing?.state === "completed" && limitNotice(existing.answer);
+    if (existing?.state === "completed" && !spoiled) return existing;
+    if (existing && spoiled) { existing.answer = ""; existing.state = "pending"; existing.runtimeTurnId = undefined; }
     const release = await this.scheduler.acquire(signal, true);
     const started = Date.now(); let usage: { input: number; output: number; total: number } | undefined;
     let usageState: "completed" | "failed" | "stopped" = "failed";
@@ -86,6 +90,7 @@ export class PersistentKnowledgeRuntime implements KnowledgeEngine {
             const messages = (remoteTurn.items || []).filter((i: any) => i.type === "agentMessage");
             turn.answer = messages.filter((i: any) => i.phase === "final_answer").map((i: any) => i.text).join("\n") || messages.map((i: any) => i.text).join("\n");
             turn.runtimeTurnId = remoteTurn.id;
+            if (limitNotice(turn.answer)) { turn.answer = ""; turn.runtimeTurnId = undefined; }
           }
         }
       }

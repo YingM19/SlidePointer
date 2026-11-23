@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { claudeContent, claudeEnv, invokeClaudeCode, resolveClaudeCommand, setClaudeWorkspace } from "../server/claude-code.ts";
+import { claudeContent, claudeEnv, invokeClaudeCode, limitNotice, resolveClaudeCommand, setClaudeWorkspace } from "../server/claude-code.ts";
 import { invokeProvider } from "../server/ai-provider.ts";
 import type { AIConnection } from "../shared/ai.ts";
 import { ClaudeSessionWorker, claudeSessionFile, deleteClaudeSession } from "../server/claude-sessions.ts";
@@ -27,6 +27,7 @@ process.stdin.on("end", () => {
     mcp_servers: Object.keys(mcp || {}).map(name => ({ name, status: mode === "mcpfail" ? "failed" : "connected" })) });
   if (mode === "exit") process.exit(3);
   if (mode === "nosession" && args.includes("--resume") && !args.includes("--fork-session")) { out({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["No conversation found with session ID: x"] }); process.exit(1); }
+  if (mode === "hitlimit") { out({ type: "result", subtype: "success", is_error: false, result: "You've hit your 5-hour limit · resets 11:20pm (Asia/Shanghai)", usage: { input_tokens: 0, output_tokens: 0 } }); return; }
   if (mode === "limited") { out({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: "API Error: 429 rate limit" }); return; }
   const delta = d => out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: d } });
   if (mode === "mcpfail") { setTimeout(() => {}, 30000); return; }
@@ -284,4 +285,12 @@ test("a conversation keeps its own Claude Code session and continues it; one-off
     got = JSON.parse(readFileSync(record, "utf8"));
     assert.ok(got.args.includes("--no-session-persistence"));
   } finally { f.store.db.close(); }
+});
+
+test("a limit notice returned as a successful answer is an error, never an answer", async () => {
+  await assert.rejects(invokeClaudeCode(connection, request(), { env: env("hitlimit") }), /额度已用完（You've hit your 5-hour limit · resets 11:20pm/);
+  assert.equal(limitNotice("You've hit your 5-hour limit · resets 11:20pm (Asia/Shanghai)"), true);
+  assert.equal(limitNotice("Claude usage limit reached. Your limit will reset at 5pm."), true);
+  assert.equal(limitNotice("本节讨论速率限制（rate limit），令牌桶在超过 limit 后丢弃分组。" + "说明".repeat(300)), false, "a real answer about limits is kept");
+  assert.equal(limitNotice("TCP 窗口达到上限（limit）后等待 ACK。"), false);
 });

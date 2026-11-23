@@ -8,6 +8,7 @@ import { chapterResults } from "../shared/learning.ts";
 import { ContinuousKnowledgeReader } from "./knowledge-reader.ts";
 import { READING_VERSION, sameSources, restoreReadingProgress } from "./knowledge-sessions.ts";
 import type { KnowledgeEngineFactory } from "./knowledge-runtime.ts";
+import { limitNotice } from "./claude-code.ts";
 
 export type KnowledgeGenerator = (input: { prompt: string; documentId?: string; page?: number; settings: AISettings; signal: AbortSignal }) => Promise<string>;
 export interface KnowledgeOptions { documentIds?: string[]; overviewOnly?: boolean; force?: boolean }
@@ -80,7 +81,8 @@ export class KnowledgeService {
     if (retryFailed) {
       const affected = new Set(r.pages.filter(p => p.state === "failed").map(p => p.documentId));
       r.pages = r.pages.filter(p => p.state !== "failed");
-      r.chapters = r.chapters.map(c => affected.has(c.documentId) || c.state === "failed" ? { ...c, state: "queued", error: undefined } : c);
+      // A chapter whose summary is a subscription-limit notice was never really summarized.
+      r.chapters = r.chapters.map(c => affected.has(c.documentId) || c.state === "failed" || limitNotice(c.summary || "") ? { ...c, state: "queued", error: undefined } : c);
       r.reduction = undefined;
     }
     r.state = "building"; r.error = undefined; this.save(r, true); void this.run(id); return r;

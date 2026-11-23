@@ -335,3 +335,21 @@ test("规划结果决定批次，提示中带小节名；规划无法解析时�
     assert.equal(f.store.get<KnowledgeRevision>("knowledge", r.id)?.state, "completed");
   } finally { f.close(); }
 });
+
+test("保存下来的额度提示不算结果：重试时这一步重新请求，正常结果照常跳过", async () => {
+  const f = fixture([1]); const runs: string[] = [];
+  const worker = { thread: async (_m: string, id?: string) => id || "claude:s", fork: async () => "claude:c", shutdown: async () => {}, rpc: async () => ({ thread: { turns: [] } }),
+    run: async (_t: string, text: string) => { runs.push(text); return { status: "completed", text: "真正的章节成果", turnId: "t2" }; } };
+  const engine = new PersistentKnowledgeRuntime(f.store, config("claude-code"), new Scheduler(), { claude: () => worker });
+  try {
+    const s = createReadingSession(f.store, f.course.id, [f.docs[0].id], { connectionId: "claude-code", model: "test" }, "章节", 1, f.docs[0].id);
+    s.threadId = "claude:s";
+    s.turns.push({ id: randomUUID(), key: "chapter", prompt: "整理章节", answer: "You've hit your 5-hour limit · resets 11:20pm (Asia/Shanghai)", images: [], sources: [], pages: [], state: "completed", runtimeTurnId: "t1" });
+    s.turns.push({ id: randomUUID(), key: "batch:0", prompt: "读取", answer: "### 第1页\n笔记", images: [], sources: [], pages: [1], state: "completed", runtimeTurnId: "t0" });
+    f.store.put("knowledgeSession", s);
+    assert.equal((await engine.read(s.id, { key: "batch:0", prompt: "读取" }, new AbortController().signal)).answer, "### 第1页\n笔记");
+    assert.equal(runs.length, 0, "正常结果不重复请求");
+    const redone = await engine.read(s.id, { key: "chapter", prompt: "整理章节" }, new AbortController().signal);
+    assert.equal(redone.answer, "真正的章节成果"); assert.equal(runs.length, 1);
+  } finally { await engine.close(); f.close(); }
+});

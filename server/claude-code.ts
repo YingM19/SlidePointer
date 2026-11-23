@@ -95,12 +95,16 @@ function failure(result: any, stderr: string) {
   const text = `${typeof result?.result === "string" ? result.result : ""}\n${stderr}`;
   const status = result?.api_error_status;
   if (/not logged in|\/login|invalid api key|oauth|authenticat/i.test(text) || status === 401) return "Claude Code 未登录或登录已过期，请在终端运行 claude 完成登录后重试";
-  if (status === 429 || /rate.?limit|usage limit|limit reached/i.test(text)) return "Claude 订阅额度已用完或请求被限流，请稍后再试";
+  if (status === 429 || /rate.?limit|usage limit|limit reached|hit your .{0,40}limit/i.test(text)) return "Claude 订阅额度已用完或请求被限流，请稍后再试";
   if (/prompt is too long|context.{0,20}(length|window)|too many tokens/i.test(text)) return "输入超出模型上下文限制，请缩小资料范围后重试";
   if (/model.{0,40}(not found|not available|invalid|access)/i.test(text)) return "当前订阅无法使用所选模型，请换一个模型";
   if (result?.stop_reason === "max_tokens") return "模型输出未完成（达到输出上限），请缩小任务后重试";
   return "Claude Code 未能完成回答，请检查连接状态后重试";
 }
+
+// At the subscription limit the CLI can end "successfully" with the limit notice as its only text,
+// e.g. "You've hit your 5-hour limit · resets 11:20pm". It must never be kept as an answer.
+export const limitNotice = (text: string) => text.trim().length < 500 && /hit your .{0,40}limit|usage limit (reached|exceeded)|limit reached.{0,40}reset|resets \d{1,2}(:\d\d)?\s*(am|pm)/i.test(text);
 
 export type ClaudeToolEvent =
   | { type: "call"; id: string; server: string; name: string; input: Record<string, unknown> }
@@ -198,7 +202,9 @@ export async function runClaude(connection: AIConnection, run: ClaudeRun, option
         const u = result.usage || {};
         const input = models.length ? models.reduce((n, m) => n + (m.inputTokens || 0) + (m.cacheReadInputTokens || 0) + (m.cacheCreationInputTokens || 0), 0) : (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
         const output = models.length ? models.reduce((n, m) => n + (m.outputTokens || 0), 0) : u.output_tokens || 0;
-        finish(undefined, { text: text || (typeof result.result === "string" ? result.result : ""), usage: { input, output, total: input + output }, turnId });
+        const answer = text || (typeof result.result === "string" ? result.result : "");
+        if (limitNotice(answer)) return finish(`Claude 订阅额度已用完（${answer.trim()}），请等额度刷新后再继续`);
+        finish(undefined, { text: answer, usage: { input, output, total: input + output }, turnId });
       });
       child.stdin.on("error", () => {});
       child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content: run.content } }) + "\n");

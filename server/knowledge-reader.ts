@@ -5,6 +5,7 @@ import type { KnowledgeEngineFactory } from "./knowledge-runtime.ts";
 import { oversized } from "./knowledge-runtime.ts";
 import { createReadingSession, sameSources, restoreReadingProgress } from "./knowledge-sessions.ts";
 import { citedSources } from "../shared/chat.ts";
+import { limitNotice } from "./claude-code.ts";
 
 export interface PagePart { page: number; text: string; part: number; parts: number }
 export function readingBatches(pages: { page: number; text: string }[], maxPages = 6, maxCharacters = 24000): PagePart[][] {
@@ -104,6 +105,11 @@ export class ContinuousKnowledgeReader {
           const texts = new Map(this.store.pages(documentId).map(p => [p.page, p.text]));
           type Plan = { id: string; batches: PagePart[][]; labels?: string[]; sections?: ChapterSection[] };
           let plan = this.store.get<Plan>("knowledgeBatchPlan", chapter.sessionId);
+          // A plan made from a limit notice fell back to fixed batches; plan again if no batch was read yet.
+          const reading = session(chapter.sessionId);
+          if (plan && !plan.sections && limitNotice(reading.turns.find(t => t.key === "plan")?.answer || "") && !reading.turns.some(t => t.key.startsWith("batch:") && t.state === "completed")) {
+            this.store.remove("knowledgeBatchPlan", chapter.sessionId); plan = undefined;
+          }
           if (!plan) {
             // Plan the chapter's sections from each page's title and opening words, then read section by section.
             const all = Array.from({ length: doc.pages }, (_, i) => ({ page: i + 1, text: texts.get(i + 1) || "" }));
