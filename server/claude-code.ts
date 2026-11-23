@@ -99,7 +99,9 @@ function failure(result: any, stderr: string) {
   if (/prompt is too long|context.{0,20}(length|window)|too many tokens/i.test(text)) return "输入超出模型上下文限制，请缩小资料范围后重试";
   if (/model.{0,40}(not found|not available|invalid|access)/i.test(text)) return "当前订阅无法使用所选模型，请换一个模型";
   if (result?.stop_reason === "max_tokens") return "模型输出未完成（达到输出上限），请缩小任务后重试";
-  return "Claude Code 未能完成回答，请检查连接状态后重试";
+  // Unrecognized failures keep the CLI's own last error line, which is what tells the cause.
+  const detail = [...(result?.errors || []), ...stderr.split(/\r?\n/)].map(l => String(l).trim()).filter(Boolean).at(-1)?.replace(/^Error:\s*/i, "").slice(0, 200);
+  return detail ? `Claude Code 未能完成回答：${detail}` : "Claude Code 未能完成回答，请检查连接状态后重试";
 }
 
 // At the subscription limit the CLI can end "successfully" with the limit notice as its only text,

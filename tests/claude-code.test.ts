@@ -26,6 +26,7 @@ process.stdin.on("end", () => {
   out({ type: "system", subtype: "init", apiKeySource: mode === "apikey" ? "ANTHROPIC_API_KEY" : "none", tools: [],
     mcp_servers: Object.keys(mcp || {}).map(name => ({ name, status: mode === "mcpfail" ? "failed" : "connected" })) });
   if (mode === "exit") process.exit(3);
+  if (mode === "inuse") { process.stderr.write("Error: Session ID 1234 is already in use.\\n"); process.exit(1); }
   if (mode === "nosession" && args.includes("--resume") && !args.includes("--fork-session")) { out({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["No conversation found with session ID: x"] }); process.exit(1); }
   if (mode === "hitlimit") { out({ type: "result", subtype: "success", is_error: false, result: "You've hit your 5-hour limit · resets 11:20pm (Asia/Shanghai)", usage: { input_tokens: 0, output_tokens: 0 } }); return; }
   if (mode === "limited") { out({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: "API Error: 429 rate limit" }); return; }
@@ -309,4 +310,8 @@ test("a fork left over from a failed attempt is removed and forked again instead
     assert.ok(got.args.includes("--fork-session")); assert.equal(got.args[got.args.indexOf("--session-id") + 1], child.slice(7));
     assert.equal(store.get("claudeFork", child), undefined);
   } finally { store.close(); }
+});
+
+test("an unrecognized CLI failure shows the CLI's own error line instead of only an exit code", async () => {
+  await assert.rejects(invokeClaudeCode(connection, request(), { env: env("inuse") }), /未能完成回答：Session ID 1234 is already in use\.（进程退出代码 1）/);
 });
