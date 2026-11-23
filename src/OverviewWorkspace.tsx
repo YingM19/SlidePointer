@@ -53,6 +53,9 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
   const live = active || progresses.find(p => p.id === recent?.id);
   const task = revisions.find(p => p.id === live?.id) || recent;
   const building = !!active;
+  // Live progress can arrive a moment after the task record; trust either one that says it is running,
+  // so a fresh click never shows "ended" or the previous attempt's error.
+  const running = building || task?.state === "building";
   const failedChapters = (task?.chapters || []).filter(c => c.state === "failed");
   const currentId = course.selectedDocumentIds.includes(r.docId) ? r.docId : course.selectedDocumentIds[0];
   const targets = scope === "all" ? course.selectedDocumentIds : scope === "selected" ? selected.filter(id => course.selectedDocumentIds.includes(id)) : currentId ? [currentId] : [];
@@ -94,9 +97,9 @@ export function OverviewWorkspace({ r, windows: w, onCreate }: { r: Reader; wind
       <div className="chapter-task-meta"><span>{scope === "current" && currentId ? chapterName(course, r.documents.find(d => d.id === currentId) || { id: currentId, name: "正在载入章节" }) + " · " : ""}{targetPages} 页 · {model?.displayName || "连接后选择模型"} · {settings.reasoningEffort || model?.defaultReasoningEffort || "默认强度"} · {force ? "重新分析" : "优先复用结果"}</span><button disabled={busy || building || !results.size} onClick={() => start(true)}>汇总已整理章节</button></div>
       {live && <div className="chapter-live" role="status"><span className={building ? "status-dot" : ""} /><span>{building ? live.phase === "framework" ? "正在建立课程框架" : live.phase === "overview" ? "正在汇总已整理章节" : live.phase === "chapter" ? "正在汇总本章" : "正在读取" : live.state === "paused" ? "已暂停" : live.state === "completed" ? "本次整理完成" : "本次整理有未完成内容"}{live.activeDocumentId ? ` · ${chapterName(course, r.documents.find(d => d.id === live.activeDocumentId) || { id: live.activeDocumentId, name: "来源已删除" })}` : ""}{building && live.activePages?.length ? ` · 正在阅读第 ${Math.min(...live.activePages)}–${Math.max(...live.activePages)} 页` : ""} · 已读 {live.completed}/{live.total} 页 · 未读 {Math.max(0, live.total - live.completed - live.failed)} 页{live.failed ? ` · 失败 ${live.failed} 页` : ""} · 复用 {live.reused || 0} 页</span>{!building && task && ["paused", "partial", "failed"].includes(task.state) && <button disabled={busy} onClick={() => { if (r.requireAI()) void perform(() => api(`/knowledge/${task.id}/resume`, { method: "POST", body: JSON.stringify({ retryFailed: task.state !== "paused" }) }), task.state === "paused" ? "继续整理" : "重试"); }}>{task.state === "paused" ? "继续整理" : "重试未完成内容"}</button>}</div>}
       {building && <progress className="overview-progress" max={Math.max(1, active.total)} value={active.completed} aria-label="已成功读取页数" />}
-      {launched && <p className="task-launch" role="status">{launched.label}已于 {launched.at.toLocaleTimeString("zh-CN")} 开始{building ? "，正在进行…" : failedChapters.length ? `，已结束，仍有 ${failedChapters.length} 章未完成（原因见下）` : "，已结束"}</p>}
-      {!building && failedChapters.length > 0 && <ul className="chapter-failures" aria-label="未完成的章节">{failedChapters.map(c => <li key={c.documentId}><strong>{chapterName(course, r.documents.find(d => d.id === c.documentId) || { id: c.documentId, name: "来源已删除" })}</strong>：{(c.error || "未完成").replace(/^Error:\s*/, "")}</li>)}</ul>}
-      {task?.error && <p className="turn-error">{task.error}</p>}
+      {launched && <p className="task-launch" role="status">{launched.label}已于 {launched.at.toLocaleTimeString("zh-CN")} 开始{running ? "，正在进行…" : failedChapters.length ? `，已结束，仍有 ${failedChapters.length} 章未完成（原因见下）` : "，已结束"}</p>}
+      {!running && failedChapters.length > 0 && <ul className="chapter-failures" aria-label="未完成的章节">{failedChapters.map(c => <li key={c.documentId}><strong>{chapterName(course, r.documents.find(d => d.id === c.documentId) || { id: c.documentId, name: "来源已删除" })}</strong>：{(c.error || "未完成").replace(/^Error:\s*/, "")}</li>)}</ul>}
+      {!running && task?.error && <p className="turn-error">{task.error}</p>}
       {error && <p className="turn-error" role="alert">{error}</p>}
       {scope === "selected" && <p className="muted">在下面勾选要整理的章节。资料是否参与问答，仍在“资料”页管理。</p>}
     </section>
