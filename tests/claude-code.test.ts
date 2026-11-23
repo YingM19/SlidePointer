@@ -294,3 +294,19 @@ test("a limit notice returned as a successful answer is an error, never an answe
   assert.equal(limitNotice("本节讨论速率限制（rate limit），令牌桶在超过 limit 后丢弃分组。" + "说明".repeat(300)), false, "a real answer about limits is kept");
   assert.equal(limitNotice("TCP 窗口达到上限（limit）后等待 ACK。"), false);
 });
+
+test("a fork left over from a failed attempt is removed and forked again instead of being refused as in use", async () => {
+  const config = path.join(dir, "leftover-config"), store = new Store(path.join(dir, "leftover-store"));
+  try {
+    const worker = new ClaudeSessionWorker(store, connection, { system: "", env: { ...env("ok"), CLAUDE_CONFIG_DIR: config } });
+    const child = await worker.fork("sonnet", "claude:11111111-2222-4333-8444-555555555555", undefined, "turn-at");
+    mkdirSync(path.join(config, "projects", "workspace"), { recursive: true });
+    const leftover = path.join(config, "projects", "workspace", `${child.slice(7)}.jsonl`);
+    writeFileSync(leftover, JSON.stringify({ type: "assistant", uuid: "x", message: { content: [{ type: "text", text: "You've hit your 5-hour limit" }] } }));
+    await worker.run(child, "本章规划", [], () => {});
+    assert.equal(existsSync(leftover), false, "the half-made fork is gone");
+    const got = JSON.parse(readFileSync(record, "utf8"));
+    assert.ok(got.args.includes("--fork-session")); assert.equal(got.args[got.args.indexOf("--session-id") + 1], child.slice(7));
+    assert.equal(store.get("claudeFork", child), undefined);
+  } finally { store.close(); }
+});

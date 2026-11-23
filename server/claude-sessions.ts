@@ -42,7 +42,10 @@ export function forkClaudeSession(store: Store, parent: string, at?: string) {
 // request is started under the same id; a fork whose parent is gone is an error, not a fresh start.
 export async function runClaudeSession(store: Store, connection: AIConnection, threadId: string, run: Omit<ClaudeRun, "session">, env?: NodeJS.ProcessEnv) {
   const fork = store.get<Fork>("claudeFork", threadId);
-  const call = (session: ClaudeRun["session"]) => runClaude(connection, { ...run, session }, { env });
+  // A fork not yet accepted whose file exists is left over from an attempt that failed (e.g. at the
+  // usage limit); the CLI would refuse the id as "already in use", so fork again from the parent.
+  if (fork && claudeSessionFile(threadId, env)) deleteClaudeSession(threadId, env);
+  const call =(session: ClaudeRun["session"]) => runClaude(connection, { ...run, session }, { env });
   let result;
   try { result = await call(fork ? { id: uuid(threadId), resume: uuid(fork.parent), at: fork.at } : { id: uuid(threadId), resume: uuid(threadId) }); }
   catch (e) {
